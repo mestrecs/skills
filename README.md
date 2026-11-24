@@ -14,7 +14,7 @@
 ## Quick start
 
 ```bash
-npx skills add mestrecs/skills        # needs Node 22.20+; other routes below
+npx skills add mestrecs/skills        # installer needs Node 22.20+; on Node 20, use the plugin or copy route below
 # open your agent (Claude Code, Codex, Gemini CLI) in your repo
 # ask it to work; on first use the skill sets itself up (writes .parallel-pr.json)
 ```
@@ -41,7 +41,7 @@ flowchart LR
 Pick one route. Installing the same skill twice (for example plugin and copied files) makes your agent see it twice.
 
 <details>
-<summary><b>npx skills</b> (any agent; needs Node 22.20 or newer)</summary>
+<summary><b>npx skills</b> (any agent; the installer needs Node 22.20 or newer, the skill itself runs on Node 20+)</summary>
 
 ```bash
 npx skills add mestrecs/skills
@@ -120,7 +120,7 @@ On first use the skill finds no `.parallel-pr.json`, inspects your setup, asks a
 
 | Skill | Use when | What you get |
 | --- | --- | --- |
-| [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) | Several chats or agents edit one repo at once; changes collide or overwrite each other; you want a PR merged safely with a second model reviewing it | One worktree per chat, a machine-wide test queue, a PR, review by a different model on critical paths, a one-at-a-time merge gate, deploy plus health check, cleanup. Seven small Node scripts with 50 tests, no dependencies. |
+| [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) | Several chats or agents edit one repo at once; changes collide or overwrite each other; you want a PR merged safely with a second model reviewing it | One worktree per chat, a machine-wide test queue, a PR, review by a different model on critical paths, a one-at-a-time merge gate, deploy plus health check, cleanup. Seven small Node scripts with 51 tests, no dependencies. |
 
 ## Why this exists
 
@@ -139,7 +139,7 @@ The rules and the reason behind each one are in [`method.md`](skills/parallel-wo
 
 - git, with a remote called `origin`
 - [GitHub CLI](https://cli.github.com/) (`gh`), logged in with `gh auth login`
-- [Node.js](https://nodejs.org/) 18 or newer for the scripts (no npm install)
+- [Node.js](https://nodejs.org/) 20 or newer for the scripts (no npm install; CI runs Node 20 and 22)
 - Optional reviewers: Claude Code (`claude`), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://geminicli.com/docs/)
 
 ## FAQ
