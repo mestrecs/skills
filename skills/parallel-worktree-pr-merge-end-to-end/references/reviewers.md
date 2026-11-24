@@ -13,7 +13,7 @@ A reviewer reads a PR that someone else wrote, hunts for defects, may commit fix
 
 ## Claude
 
-- Run as `claude -p` in the worktree.
+- `review.cjs` runs `claude -p [--model <model>]` in the worktree, with the prompt on stdin.
 - Reviewer: Sonnet, medium effort. Raise effort for a second look at something the first pass missed.
 - Helpers: Haiku for search, reading, counting and listing (closed answers you can check from outside). Sonnet for judgment: diagnosing a failing suite, writing or changing code, anything near money or production data. Opus only on the third attempt, after Sonnet failed twice; after that, stop and report what broke, what was tried and what you need.
 - No quota fields: Claude Code manages its own limits, and setup never asks about them.
@@ -21,16 +21,16 @@ A reviewer reads a PR that someone else wrote, hunts for defects, may commit fix
 
 ## Codex
 
-- Run with `codex exec` in a sandbox (read-only, unless the reviewer may commit fixes; then workspace-write).
+- `review.cjs` runs `codex exec --sandbox workspace-write -m <model> -c model_reasoning_effort=<effort> -`, with the prompt on stdin, inside the PR worktree. The sandbox is writable because the reviewer may commit fixes.
 - Model and effort come from config; medium is a good default. See the [Codex CLI page](https://developers.openai.com/codex/cli).
 - Quota: respect `maxWindowPct` (short window) and `maxWeekPct`. If the account is shared (`sharedAccount: true`), keep your own share lower and run fewer reviews at once, since other users spend the same quota.
-- If the quota cannot be read, allow the run but only one at a time.
+- Quota is read from an optional file `~/.parallel-pr/quota-<engine>.json` holding `{"windowPct": 40, "weekPct": 25}` (percent used; write it from whatever tool you trust to measure usage). If the file is missing or unreadable, the engine is allowed but only one review at a time runs on it. Claude has no quota file.
 
 ## Gemini
 
-- Run with `gemini -p` in the worktree. See the [Gemini CLI docs](https://geminicli.com/docs/).
+- `review.cjs` runs `gemini [-m <model>] -p ...` in the worktree, with the prompt on stdin. See the [Gemini CLI docs](https://geminicli.com/docs/).
 - Same caps and shared-account behavior as Codex.
-- Some account tiers have moved to another Google CLI. If `detect.cjs` reports Gemini installed but not logged in, ask the person to log in rather than guessing.
+- Since 18 June 2026 Google serves Gemini CLI to API-key and enterprise users; accounts that signed in with a consumer Google login moved to the Antigravity CLI. If `detect.cjs` reports Gemini installed but not logged in, ask the person how they authenticate rather than guessing, and drop `gemini` from `review.engines` if they cannot use it.
 
 ## Picking an order
 
@@ -41,4 +41,5 @@ Put first the engine least likely to share blind spots with your main author. Ke
 - A helper prompt declares its job (search or judgment) so the cheapest fitting model is chosen.
 - Reading a lot is not judgment. Use the small model for it.
 - Cap helpers per chat (three is plenty) and keep one slot free for an urgent task.
+- Environment hooks for tests and wrappers: `PARALLEL_PR_BIN_CLAUDE`, `PARALLEL_PR_BIN_CODEX` and `PARALLEL_PR_BIN_GEMINI` replace the engine binary; `PARALLEL_PR_GH` replaces `gh`; `PARALLEL_PR_HOME` moves `~/.parallel-pr`.
 - Repeat the rules in the prompt: no secrets, no `git add -A`, work only in the given worktree.

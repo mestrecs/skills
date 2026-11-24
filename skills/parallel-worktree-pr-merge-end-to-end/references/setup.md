@@ -31,7 +31,7 @@ If review is required for critical paths, also ask for the glob list (migrations
 
 - **Claude as reviewer or helper:** inform, do not ask. Reviewer: Sonnet, medium effort. Helpers: Haiku for search and reading, Sonnet for judgment, Opus only on the third attempt. No quota question: Claude Code manages its own limits.
 - **Codex:** model (mark the latest as recommended), effort (low, medium or high; recommend medium), `maxWindowPct` (default 90) and `maxWeekPct` (default 80) of quota this skill may use, and whether the account is shared with other people or systems (`sharedAccount`). If the CLI is missing, point to the [Codex CLI page](https://developers.openai.com/codex/cli); sign-in happens by running `codex` and choosing a sign-in method.
-- **Gemini:** model (recommend the latest), the same two caps, and shared account yes or no. If missing, see the [Gemini CLI docs](https://geminicli.com/docs/); install is `npm install -g @google/gemini-cli`, and sign-in is explained on its authentication page.
+- **Gemini:** model (recommend the latest), the same two caps, and shared account yes or no. If missing, see the [Gemini CLI docs](https://geminicli.com/docs/); install is `npm install -g @google/gemini-cli`, and sign-in is explained on its authentication page. Since 18 June 2026 consumer Google sign-in moved to the Antigravity CLI, so ask how the person authenticates (API key or enterprise) before counting Gemini as available.
 - **Platform deploy:** the health URL.
 - **VPS:** host, user, path; then Actions or SSH; health URL; restart window (for example `03:00-05:30`) and timezone. Test the connection once, read-only (a command like `echo ok`), using the person's existing key setup. Never ask for a password in the chat.
 - **Command deploy:** which command, and the health URL.
@@ -54,9 +54,9 @@ Finish by writing the file, showing a one-screen summary (engines, review rule, 
 | `version` | Always 1. |
 | `repo` | `owner/name`. |
 | `baseBranch` | Branch that PRs merge into. |
-| `docsDirectToBase` | Docs and notes skip the PR. |
+| `docsDirectToBase` | Docs and notes skip the PR and review (pushed straight to the base). |
 | `worktreeDir` | Where worktrees live; `<repo>` expands to the repo name. |
-| `linkDependencies` | Folders linked into each worktree (junction or symlink). |
+| `linkDependencies` | Folders linked into each worktree (junction or symlink). List them in `.gitignore` without a trailing slash (`node_modules`, not `node_modules/`). |
 | `testCommand` | The full suite. `quickCheckCommand`: a fast check before push, or null. |
 | `parallel.suiteSlots` | Suites at once on this machine. `stuckSuiteMinutes`: a slot older than this is stale. `minFreeMemoryGB`: do not start below this. |
 | `review.requiredFor` | `always`, `critical` or `never`. |
