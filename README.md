@@ -2,12 +2,22 @@
 
 **Run many AI coding chats in parallel on the same repo without one breaking another: each gets its own worktree, then pull request, tests, cross-model review and merge, end to end.**
 
+[![GitHub stars](https://img.shields.io/github/stars/mestrecs/skills?style=social)](https://github.com/mestrecs/skills/stargazers)
 [![skills.sh](https://skills.sh/b/mestrecs/skills)](https://skills.sh/mestrecs/skills)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Works with Claude Code, Codex and Gemini CLI](https://img.shields.io/badge/works%20with-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20Gemini%20CLI-555555)
-[![Agent Skills](https://img.shields.io/badge/format-Agent%20Skills-2ea44f)](https://agentskills.io)
 
-Open [Agent Skills](https://agentskills.io): a folder with a `SKILL.md`, plus the small Node scripts it calls. The first skill is built for the day you run three chats on one repository and none of them may step on the others.
+![Two chats deliver to the same repo at the same moment: one waits for the merge lock, re-tests on the new base, merges; both end on main and the worktrees are cleaned](assets/demo.svg)
+
+*Real run, shortened: two chats, one repo, same moment. The late chat waits for the lock, re-tests on the new base, then merges.*
+
+## Quick start
+
+```bash
+npx skills add mestrecs/skills        # needs Node 22.20+; other routes below
+# open your agent (Claude Code, Codex, Gemini CLI) in your repo
+# ask it to work; on first use the skill sets itself up (writes .parallel-pr.json)
+```
 
 ```mermaid
 flowchart LR
@@ -104,7 +114,7 @@ npx skills add mestrecs/skills -a cursor
 Or copy the folder to `<your-repo>/.cursor/skills/` or `~/.cursor/skills/`. Cursor also reads `.claude/skills/` and `.agents/skills/`. Invoke it with `/parallel-worktree-pr-merge-end-to-end`.
 </details>
 
-On first use the skill finds no `.parallel-pr.json` in your repo, inspects your setup, and asks a handful of questions (who reviews, where it goes live, how many chats at once). Then it writes the file for you to commit.
+On first use the skill finds no `.parallel-pr.json`, inspects your setup, asks a few questions (who reviews, where it goes live, how many chats at once) and writes the file for you to commit.
 
 ## Skills
 
@@ -147,6 +157,10 @@ The rules and the reason behind each one are in [`method.md`](skills/parallel-wo
 ## Contributing
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md); the scripts are tested with `node --test` and CI must stay green.
+
+## Star history
+
+[![Star History Chart](https://api.star-history.com/svg?repos=mestrecs/skills&type=Date)](https://star-history.com/#mestrecs/skills&Date)
 
 ## License
 

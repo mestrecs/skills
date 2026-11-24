@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="480" viewBox="0 0 900 480" role="img" aria-label="Terminal replay: two chats deliver in parallel, one waits for the merge lock, re-tests, merges; PROOF PASSED">
+<style>text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:12.5px;white-space:pre}@keyframes k0{0%,1.92%{opacity:0}3.08%,92%{opacity:1}96%,100%{opacity:0}}.l0{opacity:0;animation:k0 26s infinite}@keyframes k1{0%,5.00%{opacity:0}6.15%,92%{opacity:1}96%,100%{opacity:0}}.l1{opacity:0;animation:k1 26s infinite}@keyframes k2{0%,8.08%{opacity:0}9.23%,92%{opacity:1}96%,100%{opacity:0}}.l2{opacity:0;animation:k2 26s infinite}@keyframes k3{0%,11.15%{opacity:0}12.31%,92%{opacity:1}96%,100%{opacity:0}}.l3{opacity:0;animation:k3 26s infinite}@keyframes k4{0%,13.08%{opacity:0}14.23%,92%{opacity:1}96%,100%{opacity:0}}.l4{opacity:0;animation:k4 26s infinite}@keyframes k5{0%,16.92%{opacity:0}18.08%,92%{opacity:1}96%,100%{opacity:0}}.l5{opacity:0;animation:k5 26s infinite}@keyframes k6{0%,23.08%{opacity:0}24.23%,92%{opacity:1}96%,100%{opacity:0}}.l6{opacity:0;animation:k6 26s infinite}@keyframes k7{0%,25.00%{opacity:0}26.15%,92%{opacity:1}96%,100%{opacity:0}}.l7{opacity:0;animation:k7 26s infinite}@keyframes k8{0%,27.69%{opacity:0}28.85%,92%{opacity:1}96%,100%{opacity:0}}.l8{opacity:0;animation:k8 26s infinite}@keyframes k9{0%,34.62%{opacity:0}35.77%,92%{opacity:1}96%,100%{opacity:0}}.l9{opacity:0;animation:k9 26s infinite}@keyframes k10{0%,36.92%{opacity:0}38.08%,92%{opacity:1}96%,100%{opacity:0}}.l10{opacity:0;animation:k10 26s infinite}@keyframes k11{0%,39.23%{opacity:0}40.38%,92%{opacity:1}96%,100%{opacity:0}}.l11{opacity:0;animation:k11 26s infinite}@keyframes k12{0%,46.15%{opacity:0}47.31%,92%{opacity:1}96%,100%{opacity:0}}.l12{opacity:0;animation:k12 26s infinite}@keyframes k13{0%,55.77%{opacity:0}56.92%,92%{opacity:1}96%,100%{opacity:0}}.l13{opacity:0;animation:k13 26s infinite}@keyframes k14{0%,58.08%{opacity:0}59.23%,92%{opacity:1}96%,100%{opacity:0}}.l14{opacity:0;animation:k14 26s infinite}@keyframes k15{0%,60.38%{opacity:0}61.54%,92%{opacity:1}96%,100%{opacity:0}}.l15{opacity:0;animation:k15 26s infinite}@keyframes k16{0%,66.15%{opacity:0}67.31%,92%{opacity:1}96%,100%{opacity:0}}.l16{opacity:0;animation:k16 26s infinite}@keyframes k17{0%,68.85%{opacity:0}70.00%,92%{opacity:1}96%,100%{opacity:0}}.l17{opacity:0;animation:k17 26s infinite}@keyframes k18{0%,71.54%{opacity:0}72.69%,92%{opacity:1}96%,100%{opacity:0}}.l18{opacity:0;animation:k18 26s infinite}@keyframes k19{0%,74.23%{opacity:0}75.38%,92%{opacity:1}96%,100%{opacity:0}}.l19{opacity:0;animation:k19 26s infinite}@keyframes k20{0%,76.92%{opacity:0}78.08%,92%{opacity:1}96%,100%{opacity:0}}.l20{opacity:0;animation:k20 26s infinite}@keyframes k21{0%,81.54%{opacity:0}82.69%,92%{opacity:1}96%,100%{opacity:0}}.l21{opacity:0;animation:k21 26s infinite}
+@keyframes cur{0%,49%{opacity:1}50%,100%{opacity:0}}.cur{animation:cur 1s infinite}</style>
+<rect width="900" height="480" rx="10" fill="#0d1117"/>
+<rect width="900" height="36" rx="10" fill="#161b22"/><rect y="26" width="900" height="10" fill="#161b22"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f56"/><circle cx="42" cy="18" r="6" fill="#ffbd2e"/><circle cx="62" cy="18" r="6" fill="#27c93f"/>
+<text x="450" y="23" text-anchor="middle" fill="#8b949e" font-size="12">two chats, one repo, same moment</text>
+<text x="24" y="62" fill="#3fb950">$</text><text x="40" y="62" fill="#e6edf3">real run of the two-chat proof</text>
+<text class="l0" x="24" y="88" fill="#8b949e">sample project: ~/demo/widgets (origin is a bare repo, gh is a local stub, no network)</text>
+<text class="l1" x="24" y="105.5" fill="#8b949e">base main = 2a26739 with files: .gitignore, .parallel-pr.json, a.txt, check.cjs, package.json</text>
+<text class="l2" x="24" y="123" fill="#e6edf3">chat A and chat B each create a worktree with worktree.cjs</text>
+<text class="l3" x="24" y="140.5" fill="#8b949e">worktree A: ~/demo/widgets-wt/chat-a-search</text>
+<text class="l4" x="24" y="158" fill="#8b949e">worktree B: ~/demo/widgets-wt/chat-b-export</text>
+<text class="l5" x="24" y="175.5" fill="#e6edf3">both chats start deliver.cjs at the same time</text>
+<text class="l6" x="24" y="193" fill="#f778ba">chat B | [deliver] PR 1</text>
+<text class="l7" x="24" y="210.5" fill="#58a6ff">chat A | [deliver] PR 2</text>
+<text class="l8" x="24" y="228" fill="#58a6ff">chat A | [deliver] waiting for the merge lock...</text>
+<text class="l9" x="24" y="245.5" fill="#f778ba">chat B | [deliver] merged PR 1 at 6534964e</text>
+<text class="l10" x="24" y="263" fill="#f778ba">chat B | [deliver] done</text>
+<text class="l11" x="24" y="280.5" fill="#f778ba">chat B | EXIT 0 after 4.0s</text>
+<text class="l12" x="24" y="298" fill="#58a6ff">chat A | [deliver] base or code moved since the tests: running the suite again</text>
+<text class="l13" x="24" y="315.5" fill="#58a6ff">chat A | [deliver] merged PR 2 at 1dca0284</text>
+<text class="l14" x="24" y="333" fill="#58a6ff">chat A | [deliver] done</text>
+<text class="l15" x="24" y="350.5" fill="#58a6ff">chat A | EXIT 0 after 7.1s</text>
+<text class="l16" x="24" y="368" fill="#e6edf3">exit codes: A=0, B=0</text>
+<text class="l17" x="24" y="385.5" fill="#8b949e">files on main: .gitignore, .parallel-pr.json, a.txt, check.cjs, export.txt, package.json, search.txt</text>
+<text class="l18" x="24" y="403" fill="#7ee787">main contains both branch heads: true</text>
+<text class="l19" x="24" y="420.5" fill="#7ee787">worktrees left: 1 (only the main checkout expected)</text>
+<text class="l20" x="24" y="438" fill="#7ee787">worktree A exists: false, worktree B exists: false</text>
+<text class="l21" x="24" y="455.5" fill="#3fb950" font-weight="bold" font-size="16">PROOF PASSED</text>
+</svg>
