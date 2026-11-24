@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "repo": "owner/name",
+  "baseBranch": "main",
+  "docsDirectToBase": false,
+  "worktreeDir": "../<repo>-wt",
+  "linkDependencies": ["node_modules"],
+  "testCommand": "npm test",
+  "quickCheckCommand": null,
+  "parallel": { "suiteSlots": 2, "stuckSuiteMinutes": 15, "minFreeMemoryGB": 2 },
+  "review": {
+    "requiredFor": "critical",
+    "criticalPaths": ["migrations/**", "src/auth/**"],
+    "engines": ["codex", "gemini", "claude"],
+    "claude": { "model": "sonnet", "effort": "medium" },
+    "codex": { "model": "<latest>", "effort": "medium", "maxWindowPct": 90, "maxWeekPct": 80, "sharedAccount": false },
+    "gemini": { "model": "<latest>", "maxWindowPct": 90, "maxWeekPct": 80, "sharedAccount": false },
+    "maxParallel": 2
+  },
+  "helpers": { "engines": ["claude"], "claude": { "search": "haiku", "judgment": "sonnet", "thirdTry": "opus" } },
+  "deploy": {
+    "mode": "none",
+    "command": null,
+    "ssh": { "host": null, "user": null, "path": null, "update": null },
+    "healthUrl": null,
+    "restartWindow": null
+  },
+  "timezone": "UTC",
+  "language": "en",
+  "defectLog": "docs/DEFECTS.md"
+}
