@@ -78,3 +78,17 @@ test('not enough free memory: does not start (124)', () => {
     delete process.env.PARALLEL_PR_FREEMEM_GB;
   }
 });
+
+test('availableFromVmStat counts free, inactive, speculative and purgeable pages (macOS)', () => {
+  const sample = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                               10000.',
+    'Pages active:                            200000.',
+    'Pages inactive:                          150000.',
+    'Pages speculative:                         5000.',
+    'Pages wired down:                         90000.',
+    'Pages purgeable:                           1000.',
+  ].join('\n');
+  assert.strictEqual(q.availableFromVmStat(sample), (10000 + 150000 + 5000 + 1000) * 16384);
+  assert.strictEqual(q.availableFromVmStat('garbage'), null);
+});

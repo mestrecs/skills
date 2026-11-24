@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
 const path = require('path');
 const h = require('./_helpers.cjs');
 const cfgMod = require('../config.cjs');
@@ -46,5 +47,6 @@ test('loadConfig and resolveWorktreeDir against a real temp repository', () => {
 test('mainRoot from inside a linked worktree points at the main checkout', () => {
   const w = h.makeWorld();
   const dir = h.newTask(w, 'root-check');
-  assert.strictEqual(path.resolve(cfgMod.mainRoot(dir)).toLowerCase(), path.resolve(w.repo).toLowerCase());
+  const real = (p) => fs.realpathSync.native(p).toLowerCase();
+  assert.strictEqual(real(cfgMod.mainRoot(dir)), real(w.repo));
 });

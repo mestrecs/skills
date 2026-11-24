@@ -108,7 +108,10 @@ function repoRoot(cwd) {
 function mainRoot(cwd) {
   const r = git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   if (r.status !== 0) throw new Error('not inside a git repository: ' + cwd);
-  return path.dirname(path.resolve(r.stdout.trim()));
+  const root = path.dirname(path.resolve(r.stdout.trim()));
+  // One spelling per folder: Windows can hand out the same folder as a short 8.3 name
+  // (RUNNER~1) or a long one, and macOS as /var or /private/var. Compare real paths only.
+  try { return fs.realpathSync.native(root); } catch (_) { return root; }
 }
 
 function loadConfig(root) {

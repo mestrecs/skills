@@ -23,8 +23,28 @@ function buildSpawn(cmdArgs, platform) {
   return { cmd, args: cmdArgs.slice(1), shell: platform === 'win32' && /\.cmd$/.test(cmd) };
 }
 
+// PURE. macOS keeps most RAM as cache, so os.freemem() reports a few hundred MB on an idle Mac
+// and a queue that trusts it waits forever. What a new process can really get is free +
+// inactive + speculative + purgeable pages, as `vm_stat` prints them.
+function availableFromVmStat(text) {
+  const size = Number((/page size of (\d+) bytes/.exec(text) || [])[1]);
+  if (!size) return null;
+  let pages = 0;
+  let seen = false;
+  for (const key of ['Pages free', 'Pages inactive', 'Pages speculative', 'Pages purgeable']) {
+    const m = new RegExp(key + ':\\s+(\\d+)').exec(text);
+    if (m) { pages += Number(m[1]); seen = true; }
+  }
+  return seen ? pages * size : null;
+}
+
 function freeBytes() {
   if (process.env.PARALLEL_PR_FREEMEM_GB) return Number(process.env.PARALLEL_PR_FREEMEM_GB) * 1024 ** 3;
+  if (process.platform === 'darwin') {
+    const r = cp.spawnSync('vm_stat', [], { encoding: 'utf8' });
+    const avail = r.status === 0 ? availableFromVmStat(r.stdout) : null;
+    if (avail !== null) return Math.max(avail, os.freemem());
+  }
   return os.freemem();
 }
 
@@ -82,6 +102,6 @@ function main(argv) {
   return code;
 }
 
-module.exports = { memoryOk, buildSpawn };
+module.exports = { memoryOk, buildSpawn, availableFromVmStat };
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
