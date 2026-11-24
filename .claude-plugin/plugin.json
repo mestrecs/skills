@@ -1,0 +1,10 @@
+{
+  "name": "parallel-worktree-pr-merge-end-to-end",
+  "description": "Run many AI coding chats in parallel on the same repo without one breaking another: each gets its own worktree, then pull request, tests, cross-model review and merge, end to end.",
+  "version": "0.1.0",
+  "author": { "name": "mestrecs" },
+  "homepage": "https://github.com/mestrecs/skills",
+  "repository": "https://github.com/mestrecs/skills",
+  "license": "MIT",
+  "keywords": ["agent-skills", "git-worktree", "pull-requests", "code-review", "parallel-agents", "claude-code", "codex", "gemini-cli"]
+}
