@@ -1,0 +1,17 @@
+{
+  "skill": "parallel-worktree-pr-merge-end-to-end",
+  "should_trigger": [
+    { "prompt": "I have three Claude Code chats open on the same repo and they keep overwriting each other's files. How do I stop that?", "reason": "Several chats on one repo colliding is the core problem the skill solves." },
+    { "prompt": "Open a PR for this change, get another model to review it, and merge it safely when it is green.", "reason": "Asks for PR, cross-model review and a safe merge end to end." },
+    { "prompt": "Set up git worktrees so my agents each work in their own folder and I can merge their branches one after another.", "reason": "Worktree per agent plus ordered merges." },
+    { "prompt": "My Codex and Gemini CLI sessions both finished at the same time and I need to merge both PRs without one breaking main.", "reason": "Concurrent merges from different agents need the merge queue and gate." },
+    { "prompt": "There are dozens of old worktrees and pr/ branches on my disk from merged PRs; clean them up without losing unmerged work.", "reason": "Cleanup of merged worktrees and branches is part of the skill." }
+  ],
+  "should_not_trigger": [
+    { "prompt": "Explain what a git rebase does and when to use it instead of merge.", "reason": "A general git question with no parallel agents, PR or merge workflow to run." },
+    { "prompt": "Write a Python function that parses a CSV file and returns the totals per column.", "reason": "Plain coding task unrelated to git workflow." },
+    { "prompt": "Review this single function for bugs and suggest improvements.", "reason": "One-off code review of a snippet, not a PR delivery loop." },
+    { "prompt": "Create a new GitHub repository and add a README and a .gitignore for a Node project.", "reason": "Repository bootstrapping, no concurrent work or merge pipeline." },
+    { "prompt": "Why does my React component re-render on every keystroke?", "reason": "Application debugging, nothing to do with branches or PRs." }
+  ]
+}
