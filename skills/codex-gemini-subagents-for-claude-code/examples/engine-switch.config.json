@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "engines": ["codex", "gemini", "claude"],
+  "defaults": {
+    "helper": "claude",
+    "reviewer": "codex"
+  },
+  "newChatsMode": "opt-in",
+  "fallback": ["codex", "claude"],
+  "switchOn": {
+    "mode": "percent-or-error",
+    "maxWindowPct": 90,
+    "maxWeekPct": 80,
+    "stopMidRun": true,
+    "ceilingValidMinutes": 30
+  },
+  "codex": {
+    "model": "gpt-6.2-sol",
+    "effort": "medium",
+    "maxConcurrent": 2,
+    "sharedAccount": false,
+    "sharePct": 100
+  },
+  "gemini": {
+    "cli": "gemini",
+    "model": "gemini-4-hydrogen-high",
+    "maxConcurrent": 1,
+    "sharedAccount": false,
+    "sharePct": 100
+  },
+  "guard": {
+    "allowAgents": ["web-fetch", "claude-code-guide", "statusline-setup"],
+    "toolExceptions": ["mcp", "browser", "chrome", "supabase", "database"],
+    "auditLog": "~/.engine-switch/claude-exceptions.jsonl"
+  }
+}

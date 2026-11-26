@@ -1,0 +1,17 @@
+{
+  "skill": "codex-gemini-subagents-for-claude-code",
+  "should_trigger": [
+    { "prompt": "Use codex helpers for this chat so my subagents do not burn my Claude quota.", "reason": "Asks to switch helper subagent routing for the current chat to Codex." },
+    { "prompt": "Use gemini helpers in this Claude Code session and block accidental Claude subagents with a hook.", "reason": "Requests per-chat Gemini helper routing and the PreToolUse guard hook." },
+    { "prompt": "Configure Codex CLI and Antigravity CLI as subagent helpers with automatic fallback to Claude only when quota ceilings are hit.", "reason": "Describes the core quota-ceiling fallback and helper runner setup." },
+    { "prompt": "Why did my Claude Code hook block the Explore agent when I asked for helper work?", "reason": "Directly references the guard hook blocking Explore under a non-Claude chat key." },
+    { "prompt": "Run this subagent task through Claude because it needs the Supabase MCP server.", "reason": "Requests the CLAUDE-ONLY: tool exception path for an exclusive Claude tool." }
+  ],
+  "should_not_trigger": [
+    { "prompt": "Explain how JavaScript Promises work compared to async/await.", "reason": "General programming question unrelated to subagent routing or engine switching." },
+    { "prompt": "Open a PR for my current branch, run cross-model review, and merge it into main.", "reason": "PR delivery and merge pipeline belongs to parallel-worktree-pr-merge-end-to-end, not helper subagent routing." },
+    { "prompt": "Write a SQL migration to add an index on orders.created_at.", "reason": "Plain coding task with no request to route helpers or configure engines." },
+    { "prompt": "Why is my git rebase failing with a merge conflict on package-lock.json?", "reason": "General git troubleshooting unrelated to Claude Code subagents or hooks." },
+    { "prompt": "Create a Dockerfile for a Node.js 22 web service.", "reason": "Container configuration task unrelated to AI engine switching." }
+  ]
+}

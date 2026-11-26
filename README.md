@@ -121,6 +121,7 @@ On first use the skill finds no `.parallel-pr.json`, inspects your setup, asks a
 | Skill | Use when | What you get |
 | --- | --- | --- |
 | [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) | Several chats or agents edit one repo at once; changes collide or overwrite each other; you want a PR merged safely with a second model reviewing it | One worktree per chat, a machine-wide test queue, a PR, review by a different model on critical paths, a one-at-a-time merge gate, deploy plus health check, cleanup. Seven small Node scripts with 51 tests, no dependencies. |
+| [`codex-gemini-subagents-for-claude-code`](skills/codex-gemini-subagents-for-claude-code/SKILL.md) | You want Claude Code to send subagent work to Codex CLI or Gemini / Antigravity CLI per chat instead of spending Claude quota | Per-chat engine switch, sandboxed Codex and Gemini/agy runners with mid-run quota watchdogs, a PreToolUse guard hook that blocks unintended Claude subagents, verified ceiling fallback, and a JSONL audit log for Claude exceptions. |
 
 ## Why this exists
 

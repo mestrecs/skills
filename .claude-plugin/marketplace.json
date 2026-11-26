@@ -13,6 +13,13 @@
       "source": "./",
       "strict": false,
       "skills": ["./skills/parallel-worktree-pr-merge-end-to-end"]
+    },
+    {
+      "name": "codex-gemini-subagents-for-claude-code",
+      "description": "Send Claude Code subagent work to Codex CLI or Gemini / Antigravity CLI per chat instead of spending Claude quota, enforced by a PreToolUse guard hook with verified ceiling fallback and exception audit logging.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/codex-gemini-subagents-for-claude-code"]
     }
   ]
 }
