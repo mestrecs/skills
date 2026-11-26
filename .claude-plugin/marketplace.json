@@ -20,6 +20,13 @@
       "source": "./",
       "strict": false,
       "skills": ["./skills/codex-gemini-subagents-for-claude-code"]
+    },
+    {
+      "name": "cross-model-code-review-codex-gemini-claude",
+      "description": "Review pull requests or branch diffs with a different model (Codex, Gemini / Antigravity, or a fresh Claude session) chosen per chat, with strict quota-ceiling fallback, concurrency limits, safe fix commits, and single-commit verdicts.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/cross-model-code-review-codex-gemini-claude"]
     }
   ]
 }

@@ -1,0 +1,17 @@
+{
+  "skill": "cross-model-code-review-codex-gemini-claude",
+  "should_trigger": [
+    { "prompt": "Review PR #42 with Codex and fall back to Gemini or Claude only if it hits quota.", "reason": "Requests cross-model PR review with ordered quota-ceiling fallback." },
+    { "prompt": "Use gemini reviewer for this chat instead of Codex.", "reason": "Asks to switch the reviewer engine per chat." },
+    { "prompt": "Review my local branch diff against main using a different model from the one that wrote it.", "reason": "Requests independent cross-model review on a local branch diff." },
+    { "prompt": "Why did the reviewer stop falling back when Codex was slow instead of hitting a quota limit?", "reason": "Directly asks about the strict no-fallback-on-slowness review policy." },
+    { "prompt": "Set up cross-model code review with a max of 3 concurrent reviews per engine and single-head verdicts.", "reason": "Describes configuring concurrency limits and head-pinned review verdicts." }
+  ],
+  "should_not_trigger": [
+    { "prompt": "Use codex helpers for subagent searches in this chat.", "reason": "Subagent helper routing belongs to codex-gemini-subagents-for-claude-code, not PR/branch code review." },
+    { "prompt": "Set up git worktrees, open a PR, merge it through a lock, and deploy end to end.", "reason": "Full worktree-to-deploy lifecycle belongs to parallel-worktree-pr-merge-end-to-end." },
+    { "prompt": "Explain the difference between git diff A..B and A...B.", "reason": "General git question with no code review to execute." },
+    { "prompt": "Write unit tests for my invoice calculation function in Node.js.", "reason": "Plain coding task unrelated to cross-model review or engine switching." },
+    { "prompt": "Fix the TypeScript type error on line 42 of src/server.ts.", "reason": "Direct bug-fixing task rather than independent cross-model code review." }
+  ]
+}
