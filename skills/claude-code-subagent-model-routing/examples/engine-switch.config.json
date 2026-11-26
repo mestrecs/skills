@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "engines": ["codex", "gemini", "claude"],
+  "defaults": {
+    "helper": "claude",
+    "reviewer": "codex"
+  },
+  "newChatsMode": "opt-in",
+  "fallback": ["codex", "claude"],
+  "switchOn": {
+    "mode": "percent-or-error",
+    "maxWindowPct": 90,
+    "maxWeekPct": 80,
+    "stopMidRun": true,
+    "ceilingValidMinutes": 30
+  },
+  "codex": {
+    "model": "<latest>",
+    "effort": "medium",
+    "maxConcurrent": 2,
+    "sharedAccount": false,
+    "sharePct": 100
+  },
+  "gemini": {
+    "cli": "gemini",
+    "model": "<latest>",
+    "maxConcurrent": 1,
+    "sharedAccount": false,
+    "sharePct": 100
+  },
+  "guard": {
+    "allowAgents": [],
+    "toolExceptions": [],
+    "auditLog": "~/.engine-switch/claude-exceptions.jsonl"
+  },
+  "modelRouting": {
+    "searchModel": "haiku",
+    "defaultEffort": "medium",
+    "retryEffort": "high",
+    "opusMinAttempt": 3,
+    "maxAttempts": 3,
+    "capNamedAgentOpus": false,
+    "highEffortAgents": [],
+    "readingVerbs": [
+      "read", "reading",
+      "find", "finding",
+      "locate", "locating",
+      "list", "listing",
+      "count", "counting",
+      "extract", "extracting",
+      "search", "searching",
+      "inventory", "inventorying"
+    ],
+    "leanHelper": {
+      "enabled": false,
+      "agentName": "helper",
+      "requireTranscriptListing": true,
+      "includedMcps": []
+    }
+  }
+}

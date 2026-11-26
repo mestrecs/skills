@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task|Workflow|Bash|PowerShell|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/skills/codex-gemini-subagents-for-claude-code/scripts/hooks/engine-guard.cjs\""
+          }
+        ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/skills/claude-code-subagent-model-routing/scripts/hooks/model-router.cjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

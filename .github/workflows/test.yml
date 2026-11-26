@@ -23,7 +23,12 @@ jobs:
       - name: Configure git identity for the tests
         run: |
           git config --global user.name "ci"
-          git config --global user.email "ci@example.com"
-      - name: Run the script tests
-        working-directory: skills/parallel-worktree-pr-merge-end-to-end
-        run: node --test scripts/test/
+          git config --global user.email "ci@users.noreply.github.com"
+      - name: Run the script tests for every skill
+        shell: bash
+        run: |
+          set -euo pipefail
+          for d in skills/*/scripts/test; do
+            echo "=== Testing $d ==="
+            (cd "$(dirname "$(dirname "$d")")" && node --test scripts/test/*.test.cjs)
+          done

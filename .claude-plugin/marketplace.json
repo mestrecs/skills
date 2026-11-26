@@ -13,6 +13,27 @@
       "source": "./",
       "strict": false,
       "skills": ["./skills/parallel-worktree-pr-merge-end-to-end"]
+    },
+    {
+      "name": "codex-gemini-subagents",
+      "description": "Send Claude Code subagent work to Codex CLI or Gemini / Antigravity CLI per chat instead of spending Claude quota, enforced by a PreToolUse guard hook with verified ceiling fallback and exception audit logging.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/codex-gemini-subagents-for-claude-code"]
+    },
+    {
+      "name": "cross-model-code-review",
+      "description": "Review pull requests or branch diffs with a different model (Codex, Gemini / Antigravity, or a fresh Claude session) chosen per chat, with strict quota-ceiling fallback, concurrency limits, safe fix commits, and single-commit verdicts.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/cross-model-code-review-codex-gemini-claude"]
+    },
+    {
+      "name": "subagent-model-routing",
+      "description": "Route Claude Code subagents to the cheapest fitting model and effort via a PreToolUse hook: Haiku for search and Explore, Sonnet medium for judgment, reading-verb rejection, ATTEMPT 2/3/4+ escalation, named-agent model preservation, and optional lean helper swap.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/claude-code-subagent-model-routing"]
     }
   ]
 }
