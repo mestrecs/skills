@@ -11,9 +11,9 @@ In a shell command, quoted text and heredoc bodies are data, so writing or searc
   of `tool_input.command` for a recognized shell launch. Only one declaration is accepted.
 - `CLAUDE-ONLY: ceiling` requires a recent marker for each enabled external engine before Claude
   in the configured fallback order, starting with the active engine.
-- `CLAUDE-ONLY: tool <name>` requires an exact user-configured tool name. A name in
+- `CLAUDE-ONLY: tool <name>` requires a configured Claude-only connector name (a connector that exists only in Claude Code on this machine, found by setup, such as `my-db` or `browser`; default `[]`). When `<name>` is not in the list, the denial message states which names are allowed (or that none are, and to run `"reconfigure"` if a connector was added). A name in
   `guard.allowAgents` authorizes only the matching named Agent or Task when the request explicitly
-  names that agent in its declaration. Built-in general agents still require a tool exception.
+  names that agent in its declaration. Built-in general agents still require a configured connector exception.
 - A permitted exception appends one JSONL record to `guard.auditLog`. A failed append denies the
   exception. Unexpected hook errors exit 0 silently.
 

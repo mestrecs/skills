@@ -10,7 +10,7 @@ Run:
 node scripts/detect.cjs
 ```
 
-It prints JSON with `os`, `node`, `configExists`, `hookConfigured`, and `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`). Show the findings and ask the user to confirm. For engine CLIs, a settings folder suggests prior setup and does not prove current authentication.
+It prints JSON with `os`, `node`, `configExists`, `hookConfigured`, `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`), and `connectors` (`claude`, `codex`, `gemini`, `agy` — `"not checked"` when unknown — and `claudeOnly`). Show the findings and ask the user to confirm. For engine CLIs, a settings folder suggests prior setup and does not prove current authentication. Connector detection reads MCP server names only, never values, env, args, URLs, or tokens.
 
 If a chosen CLI is missing or not signed in, show its official setup command/link:
 - **Claude Code**: [Claude Code docs](https://docs.claude.com/en/docs/claude-code)
@@ -42,8 +42,14 @@ Always show the default value that will be used if the user skips a question, an
    - Watchdog stops a running helper mid-way if the quota file crosses the ceiling: `true` (recommended) or `false`.
    - Ceiling marker validity in minutes: `30` (recommended) or custom positive integer.
 6. **Guard exceptions & audit log (`guard.allowAgents`, `guard.toolExceptions`, `guard.auditLog`)**:
-   - Named agents eligible for a matching Claude-only tool declaration: default `[]` — ask if they want to add any named reviewer agent.
-   - Exact Claude-only tool names: default `[]`.
+   - Named agents eligible for a matching Claude-only tool declaration: default `[]` — ask if they want to add any named agent.
+   - Claude-only connectors (`guard.toolExceptions`, default `[]` — a connector that exists only in Claude Code on this machine, found by setup):
+     - On `"reconfigure"`, re-run `node scripts/detect.cjs` so `connectors.claudeOnly` is refreshed against the selected helper engines.
+     - If `connectors.claudeOnly` is **not empty**: show the list (`"Claude Code here can use these connectors that your Codex/Gemini helpers cannot: X, Y"`), and ask: *"When a helper task needs one of these, may Claude do that one task (it is logged)?"*
+       - **(a) Yes, for all of them (Recommended when the list is not empty)** — saves every name in `claudeOnly` to `guard.toolExceptions`.
+       - **(b) Only some — pick** — lets the user pick a subset from `claudeOnly`.
+       - **(c) No, never — the task waits or is done in the main chat** — keeps `[]`.
+     - If `connectors.claudeOnly` **is empty**: do not ask; say `"no Claude-only connectors found; the tool exception stays off"` and keep `[]`.
    - Audit log path: default `"~/.engine-switch/claude-exceptions.jsonl"`.
 
 ## Round 2 (per-engine details, only for selected engines)
@@ -117,7 +123,7 @@ echo '{"session_id":"11111111-1111-1111-1111-111111111111","tool_name":"Agent","
 | `gemini.sharedAccount` | Boolean | `false` |
 | `gemini.sharePct` | Number `1..100` | `100` |
 | `guard.allowAgents` | Array of lowercase agent names | `[]` |
-| `guard.toolExceptions` | Array of exact tool names | `[]` |
+| `guard.toolExceptions` | Array of Claude-only connector names (found by setup) | `[]` |
 | `guard.auditLog` | Path to JSONL audit log | `"~/.engine-switch/claude-exceptions.jsonl"` |
 
 Skill format reference: [Agent Skills](https://agentskills.io).

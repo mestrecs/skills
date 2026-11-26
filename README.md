@@ -210,7 +210,7 @@ The rules and the reason behind each one are in [`method.md`](skills/parallel-wo
 
 **What if I only use Claude?** Set `review.engines` to `["claude"]`. The reviewer is then a fresh Claude session (Sonnet, medium effort), never the chat that wrote the change. Weaker than a second vendor, but still a second pair of eyes, and nothing else changes.
 
-**Can a chat still start Claude when the guard is on?** Only with a recent ceiling proof (`CLAUDE-ONLY: ceiling`) or a configured Claude-only tool (`CLAUDE-ONLY: tool <name>`), and both are logged to the audit file. A hook cannot stop indirect launches such as a program that runs Claude inside it — see [`guard-hook.md`](skills/codex-gemini-subagents-for-claude-code/references/guard-hook.md).
+**Can a chat still start Claude when the guard is on?** Only with a recent ceiling proof (`CLAUDE-ONLY: ceiling`) or a configured Claude-only connector (`CLAUDE-ONLY: tool <name>` — a connector that exists only in Claude Code on this machine, found by setup, such as `my-db` or `browser`; default `[]`), and both are logged to the audit file. A hook cannot stop indirect launches such as a program that runs Claude inside it — see [`guard-hook.md`](skills/codex-gemini-subagents-for-claude-code/references/guard-hook.md).
 
 **Do I need all four skills?** No. Each skill works alone; install only what you want with `--skill <name>`.
 

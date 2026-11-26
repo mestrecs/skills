@@ -127,7 +127,7 @@ function validateConfig(cfg) {
   if (!Array.isArray(g.allowAgents) || g.allowAgents.some((a) => typeof a !== 'string' || !/^[a-z0-9_.:-]+$/i.test(a.trim()))) {
     errors.push('guard.allowAgents must be a list of non-empty agent names');
   }
-  if (!Array.isArray(g.toolExceptions) || g.toolExceptions.some((t) => typeof t !== 'string' || !/^[a-z0-9_.:-]+$/i.test(t.trim()))) {
+  if (!Array.isArray(g.toolExceptions) || g.toolExceptions.some((t) => typeof t !== 'string' || !/^[a-z0-9_.: -]+$/i.test(t.trim()))) {
     errors.push('guard.toolExceptions must be a list of exact tool names');
   }
   if (typeof g.auditLog !== 'string' || !g.auditLog.trim()) {
