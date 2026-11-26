@@ -65,3 +65,22 @@ test('CLI prints current key with no role, updates with role, rejects invalid in
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('all-chats default, normalized keys, and malformed keys are distinguishable', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'es-switch-key-'));
+  try {
+    const cfg = { ...cfgMod.DEFAULTS, defaults: { helper: 'gemini' } };
+    assert.equal(sw.readChatKey(SID, home, cfg).helper, 'claude');
+    assert.equal(sw.readChatKey(SID, home, { ...cfg, newChatsMode: 'all-chats' }).helper, 'gemini');
+    const file = sw.chatKeyPath(SID, home);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ ' Helper ': ' CODEX ' }));
+    assert.equal(sw.readChatKey(SID, home, cfg).helper, 'codex');
+    for (const broken of ['{', '[]', '{"helper":"unknown"}', '{"helper":"codex","HELPER":"claude"}']) {
+      fs.writeFileSync(file, broken);
+      assert.equal(sw.readChatKey(SID, home, cfg), null);
+    }
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

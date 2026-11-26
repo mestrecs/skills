@@ -1,6 +1,6 @@
 # First-Run Setup
 
-Run this interview only when `~/.engine-switch/config.json` (or `$ENGINE_SWITCH_HOME/config.json`) does not exist, or when the user asks to `"reconfigure"`. Never ask for a password, API key, or token in chat, and never open `.env`.
+Run this interview on first use of this skill or when the user asks to reconfigure. If a shared config already exists, reuse the answers it contains and ask for the settings introduced by this skill. Never ask for a password, API key, or token in chat, and never open `.env`.
 
 ## Step 0: Detect installed tools
 
@@ -10,7 +10,7 @@ Run:
 node scripts/detect.cjs
 ```
 
-It prints JSON with `os`, `node`, `configExists`, `configPath`, `hookConfigured`, `engineGuardConfigured`, `leanAgentInstalled`, and `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`). Show the findings in plain words and ask the user to confirm or correct.
+It prints JSON with `os`, `node`, `configExists`, `configPath`, `hookConfigured`, `engineGuardConfigured`, `leanAgentInstalled`, and `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`). Show the findings and ask the user to confirm. For engine CLIs, a settings folder suggests prior setup and does not prove current authentication.
 
 If a chosen CLI is missing or not signed in, show its official setup command and link:
 - **Claude Code**: [Claude Code docs](https://docs.claude.com/en/docs/claude-code)
@@ -31,7 +31,7 @@ Always show the default value that will be used if the user skips a question, an
 
 1. **Default effort & retry/Opus gating (`modelRouting.defaultEffort`, `retryEffort`, `opusMinAttempt`, `maxAttempts`)**:
    - `medium` default, `high` on `ATTEMPT: 2`, `opus` unlocked on `ATTEMPT: 3`, stop after `3` attempts (Recommended — cuts Sonnet token usage on bounded tasks and avoids infinite retry loops).
-   - Or customize default effort (`low`, `medium`, `high`) or max attempts.
+   - Ask for the search model alias (`haiku` by default), default and retry effort, minimum Opus attempt, and maximum attempts.
 2. **Optional lean helper agent (`modelRouting.leanHelper.enabled`)**:
    - `false` (Recommended to start — avoids `Agent type not found` until `agents/helper.md` is installed in `~/.claude/agents/helper.md` and announced in new chats).
    - `true` — swaps `general-purpose` to `helper` whenever the chat transcript lists it and the prompt has neither `TOOLS: all` nor an external `mcp__` reference.
@@ -46,28 +46,30 @@ Always show the default value that will be used if the user skips a question, an
    - `fallback`: non-empty ordered list, default `["codex", "claude"]`.
 5. **Quota switch thresholds & guard exceptions (`switchOn.*`, `guard.*`)**:
    - `switchOn.mode`: `percent-or-error` (Recommended — switches at `maxWindowPct: 90`, `maxWeekPct: 80`, or CLI rate-limit error) or `error-only`.
+   - Ask for the short-window and weekly percentages separately, each within 0 to 100.
    - `switchOn.stopMidRun`: `true` (Recommended) or `false`.
    - `switchOn.ceilingValidMinutes`: `30` (Recommended) or positive integer.
-   - `guard.allowAgents`: default `["web-fetch", "claude-code-guide", "statusline-setup"]`.
-   - `guard.toolExceptions`: default `["mcp", "browser", "chrome", "supabase", "database"]`.
+   - `guard.allowAgents`: default `[]`.
+   - `guard.toolExceptions`: default `[]`.
    - `guard.auditLog`: default `"~/.engine-switch/claude-exceptions.jsonl"`.
 
 ## Round 2 (per-engine details, only if `codex` or `gemini` are enabled)
 
 - **Codex (`codex`)**:
-  - Model: `gpt-6.2-sol` (Recommended) or custom model string.
+  - Model: `<latest>` (CLI default, recommended) or custom model string.
   - Effort: `medium` (Recommended), `low`, or `high`.
   - Max concurrent runs (`maxConcurrent`): `2` (Recommended) or `1`.
   - Shared account (`sharedAccount`): `false` (Recommended) or `true` (with `sharePct` `1–100`).
 - **Gemini (`gemini`)**:
   - CLI binary (`cli`): `gemini` (Recommended for API-key/enterprise) or `agy` (consumer sign-in via Antigravity CLI).
-  - Model: `gemini-4-hydrogen-high` (Recommended), `gemini-4-carbon-high`, or custom model string.
+  - Model: `<latest>` (CLI default, recommended), or a model name supported by the selected CLI.
+  - Effort for `agy` only: CLI default, `low`, `medium`, or `high` if supported by the chosen model.
   - Max concurrent runs (`maxConcurrent`): `1` (Recommended).
   - Shared account (`sharedAccount`): `false` (Recommended) or `true` (with `sharePct` `1–100`).
 
 ## Finish: write config, optional lean agent, install hook, and verify
 
-1. Write `~/.engine-switch/config.json` (comment-free JSON; example: `examples/engine-switch.config.json`) and validate it:
+1. Merge these answers into `~/.engine-switch/config.json`, retaining other skills' settings. Write it (comment-free JSON; example: `examples/engine-switch.config.json`) and validate it:
    ```bash
    node scripts/config.cjs --validate ~/.engine-switch/config.json
    ```
@@ -86,7 +88,7 @@ Standalone snippet (`matcher: "Agent|Task"`):
         "hooks": [
           {
             "type": "command",
-            "command": "node <skill-dir>/scripts/hooks/model-router.cjs"
+            "command": "node \"<skill-dir>/scripts/hooks/model-router.cjs\""
           }
         ]
       }
@@ -95,18 +97,18 @@ Standalone snippet (`matcher: "Agent|Task"`):
 }
 ```
 
-Composed with `codex-gemini-subagents-for-claude-code` (`engine-guard.cjs` runs first; `model-router.cjs` runs second — see `examples/settings.hooks.json`):
+Composed with `codex-gemini-subagents-for-claude-code` (both hooks run independently and guard denial takes precedence. See `examples/settings.hooks.json`):
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Task|Workflow|Bash",
+        "matcher": "Agent|Task|Workflow|Bash|PowerShell|Monitor",
         "hooks": [
           {
             "type": "command",
-            "command": "node <subagents-skill-dir>/scripts/hooks/engine-guard.cjs"
+            "command": "node \"<subagents-skill-dir>/scripts/hooks/engine-guard.cjs\""
           }
         ]
       },
@@ -115,7 +117,7 @@ Composed with `codex-gemini-subagents-for-claude-code` (`engine-guard.cjs` runs 
         "hooks": [
           {
             "type": "command",
-            "command": "node <skill-dir>/scripts/hooks/model-router.cjs"
+            "command": "node \"<skill-dir>/scripts/hooks/model-router.cjs\""
           }
         ]
       }
@@ -146,20 +148,21 @@ echo '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","mode
 | `switchOn.maxWeekPct` | Number `0..100` | `80` |
 | `switchOn.stopMidRun` | Boolean | `true` |
 | `switchOn.ceilingValidMinutes` | Positive number | `30` |
-| `codex.model` | Model string | `"gpt-6.2-sol"` |
+| `codex.model` | Model string | `"<latest>"` |
 | `codex.effort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |
 | `codex.maxConcurrent` | Integer `>= 1` | `2` |
 | `codex.sharedAccount` | Boolean | `false` |
 | `codex.sharePct` | Number `1..100` | `100` |
 | `gemini.cli` | `"gemini"` or `"agy"` | `"gemini"` |
-| `gemini.model` | Model string | `"gemini-4-hydrogen-high"` |
+| `gemini.model` | Model string | `"<latest>"` |
+| `gemini.effort` | Optional `low`, `medium` or `high`, for `agy` | CLI default |
 | `gemini.maxConcurrent` | Integer `>= 1` | `1` |
 | `gemini.sharedAccount` | Boolean | `false` |
 | `gemini.sharePct` | Number `1..100` | `100` |
-| `guard.allowAgents` | Array of lowercase agent names | `["web-fetch", "claude-code-guide", "statusline-setup"]` |
-| `guard.toolExceptions` | Array of tool exception keywords | `["mcp", "browser", "chrome", "supabase", "database"]` |
+| `guard.allowAgents` | Array of lowercase agent names | `[]` |
+| `guard.toolExceptions` | Array of exact tool names | `[]` |
 | `guard.auditLog` | Path to JSONL audit log | `"~/.engine-switch/claude-exceptions.jsonl"` |
-| `modelRouting.searchModel` | Model string | `"haiku"` |
+| `modelRouting.searchModel` | Agent model alias | `"haiku"` |
 | `modelRouting.defaultEffort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |
 | `modelRouting.retryEffort` | `"low"`, `"medium"`, or `"high"` | `"high"` |
 | `modelRouting.opusMinAttempt` | Integer `>= 1` | `3` |

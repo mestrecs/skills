@@ -13,16 +13,16 @@ node scripts/run-codex.cjs --quota-only
 
 Flags passed to `codex`:
 - **Write mode (default)**:
-  `codex exec [--skip-git-repo-check] -s workspace-write -c sandbox_workspace_write.network_access=false [-c "sandbox_workspace_write.writable_roots=['<git-common-dir>']"] -m <model> -c model_reasoning_effort="<effort>" -C <dir> -o <answer-file> -`
+  `codex exec [--skip-git-repo-check] -s workspace-write -c sandbox_workspace_write.network_access=false [--add-dir <git-common-dir>] -m <model> -c model_reasoning_effort="<effort>" -C <dir> -o <answer-file> -`
 - **Delivery mode (`--deliver`)**:
   `codex exec --skip-git-repo-check -s danger-full-access -m <model> -c model_reasoning_effort="<effort>" -C <dir> -o <answer-file> -`
 - The prompt (request file + safety rules) is piped via `stdin`.
 - `--skip-git-repo-check` is passed automatically whenever `<dir>` is not inside a git repository (or in `--deliver` mode).
 
 ### Windows notes for Codex
-1. **Worktree git index**: In a linked git worktree, `.git` inside `<dir>` is a pointer file, and the shared git index/objects directory lives in `<main-repo>/.git/worktrees/...`, which is outside `<dir>`. `run-codex.cjs` runs `git -C <dir> rev-parse --path-format=absolute --git-common-dir` and passes `-c "sandbox_workspace_write.writable_roots=['<git-common-dir>']"` with **single quotes** inside the TOML array because `cmd.exe` strips double quotes.
-2. **CLI shims**: On Windows, globally installed CLIs are `.cmd` shims, so real binary spawns pass `{ shell: process.platform === 'win32', windowsHide: true }`.
-3. **Process tree kill**: When the watchdog or 60-minute timer fires on Windows, `run-codex.cjs` terminates the entire process tree with `taskkill /PID <pid> /T /F`.
+1. **Linked worktrees**: The runner grants Codex access to the shared Git directory with `--add-dir`.
+2. **CLI shims**: Launches use native executables or recognized npm shims without re-parsing arguments in a shell.
+3. **Process termination**: Windows uses `taskkill /T`. Unix uses a separate process group.
 
 ## Gemini CLI and Antigravity CLI (`scripts/run-gemini.cjs`)
 
@@ -34,24 +34,15 @@ node scripts/run-gemini.cjs --quota-only
 ```
 
 Two Google CLIs exist:
-- `gemini` ([Gemini CLI](https://geminicli.com/docs/)): API-key and enterprise accounts (since 18 June 2026). Accepts `-p <prompt> --model <m> [--sandbox]`.
+- `gemini` ([Gemini CLI](https://geminicli.com/docs/)): API-key and enterprise accounts (since 18 June 2026). Accepts `-p <prompt> --approval-mode auto_edit --output-format json [--model <m>] [--sandbox]`.
 - `agy` (Antigravity CLI): consumer Google sign-in accounts. Accepts:
-  `agy -p <prompt> --model <m> --mode accept-edits --output-format json --print-timeout <n>s --settings <permissions.json> --add-dir <tempDir> --add-dir <dir> [--sandbox]`
+  `agy -p <prompt> --model <m> --mode accept-edits --output-format json --print-timeout <n>s --add-dir <tempDir> [--sandbox]`
 
 Select which CLI `run-gemini.cjs` uses via `gemini.cli` in `~/.engine-switch/config.json` (`"gemini"` or `"agy"`), or `--cli`.
 
-### Per-run permissions and the `agy` global-allow pitfall
-- In write mode, `run-gemini.cjs` passes `--sandbox` and creates an isolated temporary directory holding a copy of the request and a per-run `permissions.json`:
-  ```json
-  {
-    "permissions": {
-      "allow": ["command(*)", "read_file(*)", "write_file(<dir>/**)"],
-      "deny": []
-    }
-  }
-  ```
-- **Known pitfall**: Never put a broad `write_file(*)` or global allow-all rule in the user's global `agy` settings file. Global `agy` allow rules leak into every helper run and permit writes outside `<dir>`. Always keep permissive rules scoped to the per-run temporary `--settings` file, which is deleted as soon as the run finishes.
-- In `--deliver` mode, `--sandbox` is omitted so network/push delivery scripts can run.
+Gemini reads the request on stdin and returns JSON. Antigravity reads its request from a temporary
+directory added with `--add-dir`. Write mode requests each CLI's sandbox. Antigravity's sandbox
+availability depends on the host. Delivery mode omits the sandbox flag.
 
 ## Quota contract, watchdog, and exit code 3
 
@@ -65,5 +56,5 @@ Different CLIs expose usage differently, so all runners share one file-based con
    - Entries older than 15 minutes (`now - at > 900000`) or in the future are ignored.
    - If `sharedAccount` is `true`, the effective cap is `min(maxPct, sharePct)`.
 2. **Watchdog**: While a helper runs, `run-codex.cjs` and `run-gemini.cjs` check the quota file every 60 seconds (when `switchOn.stopMidRun` is `true` and `switchOn.mode` is `"percent-or-error"`). If the ceiling is crossed mid-run, the runner kills the child process tree, writes a ceiling marker, and exits **3**. Anything already written stays in `<dir>` so the fallback engine can inspect `git status` / `git diff` and continue.
-3. **Output error detection**: If the CLI exits non-zero (or produces an empty answer) with output matching `/rate.?limit|quota|429|usage limit/i`, the runner writes the ceiling marker and exits **3**.
+3. **Error detection**: A terminal quota or rate-limit diagnostic yields exit 3. Model answer text does not qualify as quota evidence.
 4. **Hard limit**: Runs have a 60-minute hard timeout.

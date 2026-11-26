@@ -5,7 +5,8 @@ const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { DEFAULTS } = require('../config.cjs');
+const config = require('../config.cjs');
+const DEFAULTS = { ...config.DEFAULTS, guard: { ...config.DEFAULTS.guard, toolExceptions: ['mcp', 'browser', 'chrome', 'supabase', 'database'] } };
 const { markCeiling, recentCeiling, CEILING_VALID_MS, ceilingFilePath } = require('../ceiling.cjs');
 const { decide } = require('../hooks/engine-guard.cjs');
 
@@ -26,7 +27,7 @@ test('key claude allows everything including empty, fork, named agents, and Work
     assert.strictEqual(decide(agentCall(t), keyOf('claude'), noCeiling, DEFAULTS, noopAudit), null);
   }
   assert.strictEqual(decide({ session_id: SID, tool_name: 'Workflow', tool_input: { script: 'x' } }, keyOf('claude'), noCeiling, DEFAULTS, noopAudit), null);
-  assert.strictEqual(decide(agentCall('general-purpose'), () => null, noCeiling, DEFAULTS, noopAudit), null);
+  assert.match(decide(agentCall('general-purpose'), () => null, noCeiling, DEFAULTS, noopAudit), /invalid chat engine key/);
 });
 
 test('key codex and gemini deny empty, general-purpose, Explore, Plan, fork, named agents, and Workflow', () => {
@@ -48,16 +49,16 @@ test('key codex and gemini deny empty, general-purpose, Explore, Plan, fork, nam
   }
 });
 
-test('allow-list passes freely and supports custom reviewer agent in config', () => {
-  const customCfg = Object.assign({}, DEFAULTS, {
-    guard: Object.assign({}, DEFAULTS.guard, { allowAgents: ['web-fetch', 'claude-code-guide', 'statusline-setup', 'pr-reviewer'] }),
-  });
-  for (const t of ['web-fetch', 'claude-code-guide', 'statusline-setup', 'pr-reviewer']) {
-    assert.strictEqual(decide(agentCall(t), keyOf('codex'), noCeiling, customCfg, noopAudit), null);
-    assert.strictEqual(decide(agentCall(t), keyOf('gemini'), noCeiling, customCfg, noopAudit), null);
+test('named allow-list requires a matching tool declaration and an audit', () => {
+  const customCfg = { ...DEFAULTS, guard: { ...DEFAULTS.guard, allowAgents: ['review-agent'], toolExceptions: [] } };
+  const audits = [];
+  for (const engine of ['codex', 'gemini']) {
+    assert.ok(decide(agentCall('review-agent'), keyOf(engine), noCeiling, customCfg, noopAudit));
+    assert.equal(decide(agentCall(' REVIEW-AGENT ', '  CLAUDE-ONLY: tool review-agent\r\nTask'), keyOf(engine), noCeiling, customCfg, (entry) => audits.push(entry)), null);
+    assert.ok(decide(agentCall('fOrK', 'CLAUDE-ONLY: tool review-agent'), keyOf(engine), noCeiling, customCfg, noopAudit));
+    assert.ok(decide(agentCall('review-agent', 'CLAUDE-ONLY: tool browser'), keyOf(engine), noCeiling, customCfg, noopAudit));
   }
-  // Workflow is never allow-listed even if configured
-  assert.ok(decide({ session_id: SID, tool_name: 'Workflow', tool_input: {} }, keyOf('codex'), noCeiling, customCfg, noopAudit));
+  assert.deepEqual(audits.map((entry) => entry.detail), ['review-agent', 'review-agent']);
 });
 
 test('loopholes denied: arbitrary text after CLAUDE-ONLY:, trailing text on ceiling line, keyword stuffing in tool', () => {
@@ -68,6 +69,8 @@ test('loopholes denied: arbitrary text after CLAUDE-ONLY:, trailing text on ceil
     'CLAUDE-ONLY: needs the supabase mcp server',
     'CLAUDE-ONLY: open chrome browser',
     'CLAUDE-ONLY: tool bash',
+    'CLAUDE-ONLY: tool browser notes',
+    'CLAUDE-ONLY: tool browser\nCLAUDE-ONLY: ceiling',
     'CLAUDE-ONLY: tool',
     'CLAUDE-ONLY: ',
   ];
@@ -77,14 +80,37 @@ test('loopholes denied: arbitrary text after CLAUDE-ONLY:, trailing text on ceil
   }
 });
 
-test('key codex: CLAUDE-ONLY: ceiling passes only with recent codex marker (searched in whole tool_input)', () => {
-  assert.ok(decide(agentCall('general-purpose', 'Task\nCLAUDE-ONLY: ceiling\nDo work'), keyOf('codex'), noCeiling, DEFAULTS, noopAudit));
-  assert.strictEqual(decide(agentCall('general-purpose', 'Task\nCLAUDE-ONLY: ceiling\nDo work'), keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit), null);
-  assert.strictEqual(decide(agentCall('fork', '# CLAUDE-ONLY: ceiling'), keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit), null);
-  assert.strictEqual(
-    decide({ session_id: SID, tool_name: 'Workflow', tool_input: { script: 'step()', args: { note: 'CLAUDE-ONLY: ceiling' } } }, keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit),
-    null
-  );
+test('ceiling exceptions come from the task prompt or leading Workflow comment', () => {
+  const task = agentCall('general-purpose', 'Task\nCLAUDE-ONLY: ceiling\nDo work');
+  assert.ok(decide(task, keyOf('codex'), noCeiling, DEFAULTS, noopAudit));
+  assert.equal(decide(task, keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit), null);
+  task.tool_input.prompt = 'Task';
+  task.tool_input.description = 'CLAUDE-ONLY: ceiling';
+  assert.ok(decide(task, keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit));
+  const workflow = { session_id: SID, tool_name: 'Workflow', tool_input: { script: 'step()', args: { note: 'CLAUDE-ONLY: ceiling' } } };
+  assert.ok(decide(workflow, keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit));
+  workflow.tool_input.script = '// CLAUDE-ONLY: ceiling\r\nstep()';
+  assert.equal(decide(workflow, keyOf('codex'), ceilingsOf('codex'), DEFAULTS, noopAudit), null);
+});
+
+test('missing session, malformed state, and alternate Claude-launching tools are denied', () => {
+  const run = (call) => decide(call, keyOf('codex'), noCeiling, DEFAULTS, noopAudit);
+  assert.match(run({ ...agentCall('Explore'), session_id: null }), /invalid session ID/);
+  assert.match(run(agentCall('Explore', 'task', ' AGENT ')), /denied/);
+  assert.ok(run({ ...agentCall('Explore'), session_id: SID + '\n' }));
+  // Skill and WebFetch stay usable (blocking them would stop every skill, this one included); see "Known limits".
+  for (const name of ['Skill', 'REPL']) assert.equal(run(agentCall(undefined, 'task', name)), null);
+  assert.equal(run({ session_id: SID, tool_name: 'WebFetch', tool_input: { prompt: 'Read page' } }), null);
+  // Quoted text and heredocs are data; bash -c / eval / $( ) are commands.
+  for (const command of ['node -e "s.replace(1, \'(claude -p here)\')"', 'echo "(claude is great)"', "cat > a.md <<'EOF'\nclaude -p x\nEOF\necho done"]) {
+    assert.equal(run({ session_id: SID, tool_name: 'Bash', tool_input: { command } }), null, command);
+  }
+  for (const command of ['bash -c "claude -p x"', 'eval "claude -p z"', 'x=$(claude -p oi)', '"/opt/bin/claude" -p x']) {
+    assert.ok(run({ session_id: SID, tool_name: 'Bash', tool_input: { command } }), command);
+  }
+  for (const tool_name of ['PowerShell', 'Monitor']) {
+    assert.ok(run({ session_id: SID, tool_name, tool_input: { command: ' & "C:/Program Files/Claude/Claude.exe" -p "task"' } }));
+  }
 });
 
 test('key gemini: CLAUDE-ONLY: ceiling requires gemini AND codex markers when fallback lists codex', () => {
@@ -101,10 +127,10 @@ test('key gemini: CLAUDE-ONLY: ceiling requires gemini AND codex markers when fa
 test('CLAUDE-ONLY: tool <name> allows configured tools and logs exception', () => {
   const entries = [];
   const capture = (e) => entries.push(e);
-  for (const name of ['mcp', 'browser', 'chrome', 'supabase', 'database', 'supabase mcp']) {
+  for (const name of ['mcp', 'browser', 'chrome', 'supabase', 'database']) {
     assert.strictEqual(decide(agentCall('general-purpose', `Run query\nCLAUDE-ONLY: tool ${name}`), keyOf('gemini'), noCeiling, DEFAULTS, capture), null);
   }
-  assert.strictEqual(entries.length, 6);
+  assert.strictEqual(entries.length, 5);
   assert.strictEqual(entries[0].exception, 'tool');
   assert.strictEqual(entries[0].engine, 'gemini');
 });
@@ -132,10 +158,10 @@ test('expired ceiling marker (> 30 min) is rejected; fresh marker passes and wri
   }
 });
 
-test('audit failure never blocks and hook CLI handles deny, audit log, and malformed input safely', () => {
-  assert.strictEqual(
+test('unauditable exceptions are denied; hook output and malformed input follow PreToolUse', () => {
+  assert.match(
     decide(agentCall('general-purpose', 'CLAUDE-ONLY: tool mcp'), keyOf('codex'), noCeiling, DEFAULTS, () => { throw new Error('disk full'); }),
-    null
+    /could not be audited/
   );
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'es-hook-cli-'));
@@ -152,9 +178,11 @@ test('audit failure never blocks and hook CLI handles deny, audit log, and malfo
     });
     assert.strictEqual(denied.status, 0);
     const parsed = JSON.parse(denied.stdout);
+    assert.strictEqual(parsed.hookSpecificOutput.hookEventName, 'PreToolUse');
     assert.strictEqual(parsed.hookSpecificOutput.permissionDecision, 'deny');
 
     // Allowed exception appends to claude-exceptions.jsonl
+    fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ guard: { toolExceptions: ['browser'] } }));
     const allowed = cp.spawnSync(process.execPath, [HOOK_SCRIPT], {
       env,
       input: JSON.stringify(agentCall('general-purpose', 'CLAUDE-ONLY: tool browser')),
@@ -205,6 +233,10 @@ test('Bash: claude -p / --print at command position is denied on codex/gemini; n
     'claude -p "x"',
     'cd a && claude --model sonnet -p x',
     'npx claude --print x',
+    'command "claude" -p x',
+    'npx --yes @anthropic-ai/claude-code --print x',
+    'claude',
+    'CLAUDE --print x',
     'FOO=1 claude -p x',
     '/usr/bin/claude -p x',
     String.raw`C:\bin\claude.exe -p x`,
@@ -230,7 +262,7 @@ test('Bash: claude -p / --print at command position is denied on codex/gemini; n
   assert.ok(decide(bashCall('claude -p "x"'), keyOf('codex'), noCeiling, badCfg, noopAudit));
 
   // Shell comment # CLAUDE-ONLY: ceiling works when marker exists
-  const withComment = 'claude -p "x"\n# CLAUDE-ONLY: ceiling';
+  const withComment = '# CLAUDE-ONLY: ceiling\nclaude -p "x"';
   assert.ok(decide(bashCall(withComment), keyOf('codex'), noCeiling, DEFAULTS, noopAudit));
   const audits = [];
   assert.strictEqual(decide(bashCall(withComment), keyOf('codex'), ceilingsOf('codex'), DEFAULTS, (e) => audits.push(e)), null);

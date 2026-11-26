@@ -1,56 +1,28 @@
-# Guard Hook (`scripts/hooks/engine-guard.cjs`)
+# Guard Hook
 
-`engine-guard.cjs` is a Claude Code `PreToolUse` hook with matcher `Agent|Task|Workflow|Bash`. It makes the per-chat engine choice binding so a chat set to `codex` or `gemini` cannot quietly launch Claude subagents.
+Install `scripts/hooks/engine-guard.cjs` as a Claude Code `PreToolUse` command hook with matcher
+`Agent|Task|Workflow|Bash|PowerShell|Monitor`. See [the hook reference](https://code.claude.com/docs/en/hooks).
+In a shell command, quoted text and heredoc bodies are data, so writing or searching for the words `claude -p` is not blocked. Text after `bash -c`, `cmd /c`, `-Command` or `eval`, `$( )` substitutions, and a quoted program path in command position are still commands.
 
-## Why `Bash` is in the matcher
+- The guard reads the user-level config and the chat key. A missing key file uses the new-chat policy.
+  A missing session ID or malformed key denies recognized Claude launch requests.
+- With Codex or Gemini selected, the guard checks `tool_input.prompt` for Agent, Task and WebFetch,
+  the leading `//` comment of `tool_input.script` for Workflow, or the leading `#` comment
+  of `tool_input.command` for a recognized shell launch. Only one declaration is accepted.
+- `CLAUDE-ONLY: ceiling` requires a recent marker for each enabled external engine before Claude
+  in the configured fallback order, starting with the active engine.
+- `CLAUDE-ONLY: tool <name>` requires an exact user-configured tool name. A name in
+  `guard.allowAgents` authorizes only the matching named Agent or Task when the request explicitly
+  names that agent in its declaration. Built-in general agents still require a tool exception.
+- A permitted exception appends one JSONL record to `guard.auditLog`. A failed append denies the
+  exception. Unexpected hook errors exit 0 silently.
 
-Without `Bash`, a chat configured for `codex` or `gemini` can still launch a headless Claude subagent from the terminal via `claude -p ...` or `claude --print ...`.
+## Enforcement limits
 
-- **Fast path:** For `Bash`, `engine-guard.cjs` first checks `tool_input.command` against a command-position regex for `claude` (`claude.exe`, `claude.cmd`, with optional env assignments, `npx`, or path prefix) followed by `-p` or `--print`. Every other command (such as `git log -p`, `echo claude`, `grep -n "claude -p" file.js`, or `claude --version`) returns immediately **before reading any file**.
-- Only commands that actually invoke `claude -p` / `claude --print` at a command position proceed to chat-key lookup and exception checks (shell comments like `# CLAUDE-ONLY: ceiling` or `# CLAUDE-ONLY: tool <name>` are supported).
+Skill and WebFetch are not blocked on purpose: blocking Skill would stop the chat from using any skill, this one included, and WebFetch only reads a page. A skill declared with a forked context runs on Claude; if that matters, keep such skills out of external-engine chats.
 
-## How the decision works
-
-For every `Agent`, `Task`, `Workflow`, or `claude -p` / `claude --print` `Bash` tool call:
-
-1. **Allow-list check (`Agent` and `Task` only)**:
-   - `subagent_type` is normalized to lowercase.
-   - If `subagent_type` is in `guard.allowAgents` (default `["web-fetch", "claude-code-guide", "statusline-setup"]`, plus any reviewer agent name you add in config), the call passes immediately.
-   - `Workflow` and `Bash` `claude -p` calls are **never** on the allow-list.
-2. **Chat key lookup**:
-   - Reads `~/.engine-switch/chats/<session_id>.json` (falling back to `defaults.helper` in `~/.engine-switch/config.json`, which defaults to `claude` for opt-in behavior).
-   - If the helper engine is `claude`, **everything passes**.
-3. **Denied by default when engine is `codex` or `gemini`**:
-   - Empty `subagent_type` (which launches `general-purpose`)
-   - `general-purpose`, `Explore`, `Plan`
-   - `fork`
-   - **Any** named agent not listed in `guard.allowAgents` (for example custom executors, deployers, or validators)
-   - The `Workflow` tool
-   - Any `Bash` command invoking `claude -p` or `claude --print` at a command position
-4. **Exceptions searched across serialized `tool_input`**:
-   The hook walks every string field inside `tool_input` (prompt, script, nested args) looking for lines starting with `CLAUDE-ONLY:` (or `# CLAUDE-ONLY:`):
-   - **Tool exception**: `CLAUDE-ONLY: tool <name>` passes only when `<name>` matches a keyword in `guard.toolExceptions` (default `mcp|browser|chrome|supabase|database`).
-     - Keyword stuffing without the exact `CLAUDE-ONLY: tool <name>` prefix (e.g. `CLAUDE-ONLY: needs supabase mcp` or `CLAUDE-ONLY: open chrome`) is **denied**.
-     - Unlisted tools (e.g. `CLAUDE-ONLY: tool bash`) are **denied**.
-   - **Ceiling exception**: the exact line `CLAUDE-ONLY: ceiling` (no arbitrary trailing explanation on that line) passes only if valid recent ceiling marker(s) exist in `~/.engine-switch/ceilings/`:
-     - When the chat engine is `codex`: requires a recent `codex` ceiling marker.
-     - When the chat engine is `gemini`: requires a recent `gemini` ceiling marker **and**, whenever `fallback` includes `"codex"`, a recent `codex` ceiling marker too (proving Gemini fell back to Codex before reaching Claude).
-   - **Arbitrary `CLAUDE-ONLY: ...` lines** (e.g. `CLAUDE-ONLY: Codex is at 90%`) are **denied**.
-
-## Ceiling marker expiry
-
-- Runners write `~/.engine-switch/ceilings/<engine>.json` containing `{ "engine": "<name>", "at": <ms>, "reason": "..." }` whenever they exit with code `3`.
-- A marker is valid for `switchOn.ceilingValidMinutes` (default **30 minutes**). Once expired, Claude subagents are blocked again until a fresh `--quota-only` or runner exit `3` refreshes the marker.
-
-## Audit log
-
-Every allowed `CLAUDE-ONLY: ceiling` or `CLAUDE-ONLY: tool <name>` invocation appends one JSON line to `guard.auditLog` (default `~/.engine-switch/claude-exceptions.jsonl`):
-
-```json
-{"at":1795651200000,"sessionId":"...","engine":"codex","tool":"Agent","subagentType":"general-purpose","exception":"ceiling","detail":"ceiling"}
-```
-
-## Fail-safe behavior
-
-- Denial responses print Claude Code's standard `PreToolUse` JSON with `permissionDecision: "deny"`, stating the chat's active engine, why the call was blocked, and the two valid exception lines.
-- Any internal exception (malformed stdin JSON, unreadable disk, audit log write failure) prints nothing and exits `0` so the chat is never deadlocked.
+The shell check catches direct Claude launches and common wrappers. Arbitrary shell programs,
+other executable tools, Claude Code features that launch agents outside these hook events, and
+modification of user-writable hook state cannot be contained by this routing hook. The marker and
+tool declarations rely on trusted local writers and tool configuration. Use managed tool permissions
+and OS isolation if preventing all indirect Claude launches is a requirement.

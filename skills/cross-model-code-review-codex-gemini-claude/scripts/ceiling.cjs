@@ -8,7 +8,8 @@ const { engineHome, resolveAuditLogPath } = require('./config.cjs');
 
 const QUOTA_MAX_AGE_MS = 15 * 60 * 1000;
 const CEILING_VALID_MS = 30 * 60 * 1000;
-const QUOTA_ERROR_RE = /rate.?limit|quota|429|usage limit/i;
+// Match provider failure language, not a bare "quota" or an arbitrary number.
+const QUOTA_ERROR_RE = /\b(?:insufficient_quota|resource_exhausted|rate_limit_exceeded|usage_limit_reached|too many requests|(?:rate[ -]?limit|quota|usage limit|capacity) (?:has been |is )?(?:reached|exceeded|exhausted)|(?:hit|exceeded|reached) (?:your |the |a )?(?:usage limit|rate limit|quota)|(?:http(?: error)?|status(?: code)?|error code)\s*[:=]?\s*429)\b/i;
 
 function normalizeEngine(engine) {
   const m = String(engine || '').trim().toLowerCase();
@@ -49,7 +50,7 @@ function readCeiling(engine, home) {
     const file = ceilingFilePath(engine, home);
     if (!file || !fs.existsSync(file)) return null;
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!data || typeof data.at !== 'number' || !Number.isFinite(data.at)) return null;
+    if (!data || data.engine !== normalizeEngine(engine) || typeof data.reason !== 'string' || !data.reason.trim() || typeof data.at !== 'number' || !Number.isFinite(data.at)) return null;
     return data;
   } catch (_) {
     return null;
@@ -74,12 +75,14 @@ function readQuotaFile(engine, home, now) {
     const ref = typeof now === 'number' ? now : Date.now();
     const age = ref - q.at;
     if (age < 0 || age > QUOTA_MAX_AGE_MS) return null;
-    const hasWin = typeof q.windowPct === 'number' && Number.isFinite(q.windowPct);
-    const hasWeek = typeof q.weekPct === 'number' && Number.isFinite(q.weekPct);
+    const isPercent = (value) => Number.isFinite(value) && value >= 0 && value <= 100;
+    const hasWin = isPercent(q.windowPct);
+    const hasWeek = isPercent(q.weekPct);
+    if ((!hasWin && q.windowPct !== undefined) || (!hasWeek && q.weekPct !== undefined)) return null;
     if (!hasWin && !hasWeek) return null;
     return {
-      windowPct: hasWin ? q.windowPct : 0,
-      weekPct: hasWeek ? q.weekPct : 0,
+      windowPct: hasWin ? q.windowPct : null,
+      weekPct: hasWeek ? q.weekPct : null,
       at: q.at,
     };
   } catch (_) {

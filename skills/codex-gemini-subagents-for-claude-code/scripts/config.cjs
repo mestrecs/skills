@@ -29,7 +29,7 @@ const DEFAULTS = {
     ceilingValidMinutes: 30,
   },
   codex: {
-    model: 'gpt-6.2-sol',
+    model: '<latest>',
     effort: 'medium',
     maxConcurrent: 2,
     sharedAccount: false,
@@ -37,14 +37,14 @@ const DEFAULTS = {
   },
   gemini: {
     cli: 'gemini',
-    model: 'gemini-4-hydrogen-high',
+    model: '<latest>',
     maxConcurrent: 1,
     sharedAccount: false,
     sharePct: 100,
   },
   guard: {
-    allowAgents: ['web-fetch', 'claude-code-guide', 'statusline-setup'],
-    toolExceptions: ['mcp', 'browser', 'chrome', 'supabase', 'database'],
+    allowAgents: [],
+    toolExceptions: [],
     auditLog: '~/.engine-switch/claude-exceptions.jsonl',
   },
 };
@@ -61,6 +61,7 @@ function isObj(x) {
 function mergeDeep(base, extra) {
   const out = Array.isArray(base) ? base.slice() : Object.assign({}, base);
   for (const k of Object.keys(extra || {})) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
     if (isObj(extra[k]) && isObj(base[k])) out[k] = mergeDeep(base[k], extra[k]);
     else out[k] = extra[k];
   }
@@ -72,7 +73,7 @@ function isPct(n) {
 }
 
 function isSafeModel(m) {
-  return typeof m === 'string' && m.length > 0 && /^[\w.:\/<>-]+$/.test(m);
+  return typeof m === 'string' && (m === '<latest>' || /^[\w][\w.:\/ -]*$/.test(m));
 }
 
 // PURE. Returns an array of validation error strings (empty = valid).
@@ -99,14 +100,14 @@ function validateConfig(cfg) {
   if (!isPct(sw.maxWindowPct)) errors.push('switchOn.maxWindowPct must be a number between 0 and 100');
   if (!isPct(sw.maxWeekPct)) errors.push('switchOn.maxWeekPct must be a number between 0 and 100');
   if (typeof sw.stopMidRun !== 'boolean') errors.push('switchOn.stopMidRun must be a boolean');
-  if (typeof sw.ceilingValidMinutes !== 'number' || !Number.isFinite(sw.ceilingValidMinutes) || sw.ceilingValidMinutes <= 0) {
+  if (typeof sw.ceilingValidMinutes !== 'number' || !Number.isFinite(sw.ceilingValidMinutes * 60_000) || sw.ceilingValidMinutes <= 0) {
     errors.push('switchOn.ceilingValidMinutes must be a positive number');
   }
 
   const cx = cfg.codex || {};
   if (!isSafeModel(cx.model)) errors.push('codex.model must be a safe non-empty model name');
   if (!KNOWN_EFFORTS.includes(cx.effort)) errors.push('codex.effort must be low, medium or high');
-  if (!Number.isInteger(cx.maxConcurrent) || cx.maxConcurrent < 1) errors.push('codex.maxConcurrent must be an integer >= 1');
+  if (!Number.isSafeInteger(cx.maxConcurrent) || cx.maxConcurrent < 1) errors.push('codex.maxConcurrent must be an integer >= 1');
   if (typeof cx.sharedAccount !== 'boolean') errors.push('codex.sharedAccount must be a boolean');
   if (typeof cx.sharePct !== 'number' || !Number.isFinite(cx.sharePct) || cx.sharePct < 1 || cx.sharePct > 100) {
     errors.push('codex.sharePct must be a number between 1 and 100');
@@ -114,19 +115,20 @@ function validateConfig(cfg) {
 
   const gm = cfg.gemini || {};
   if (!KNOWN_GEMINI_CLIS.includes(gm.cli)) errors.push('gemini.cli must be gemini or agy');
+  if (gm.effort !== undefined && (gm.cli !== 'agy' || !KNOWN_EFFORTS.includes(gm.effort))) errors.push('gemini.effort requires agy and must be low, medium or high');
   if (!isSafeModel(gm.model)) errors.push('gemini.model must be a safe non-empty model name');
-  if (!Number.isInteger(gm.maxConcurrent) || gm.maxConcurrent < 1) errors.push('gemini.maxConcurrent must be an integer >= 1');
+  if (!Number.isSafeInteger(gm.maxConcurrent) || gm.maxConcurrent < 1) errors.push('gemini.maxConcurrent must be an integer >= 1');
   if (typeof gm.sharedAccount !== 'boolean') errors.push('gemini.sharedAccount must be a boolean');
   if (typeof gm.sharePct !== 'number' || !Number.isFinite(gm.sharePct) || gm.sharePct < 1 || gm.sharePct > 100) {
     errors.push('gemini.sharePct must be a number between 1 and 100');
   }
 
   const g = cfg.guard || {};
-  if (!Array.isArray(g.allowAgents) || g.allowAgents.some((a) => typeof a !== 'string' || !a.trim())) {
+  if (!Array.isArray(g.allowAgents) || g.allowAgents.some((a) => typeof a !== 'string' || !/^[a-z0-9_.:-]+$/i.test(a.trim()))) {
     errors.push('guard.allowAgents must be a list of non-empty agent names');
   }
-  if (!Array.isArray(g.toolExceptions) || g.toolExceptions.some((t) => typeof t !== 'string' || !t.trim())) {
-    errors.push('guard.toolExceptions must be a list of non-empty tool keywords');
+  if (!Array.isArray(g.toolExceptions) || g.toolExceptions.some((t) => typeof t !== 'string' || !/^[a-z0-9_.:-]+$/i.test(t.trim()))) {
+    errors.push('guard.toolExceptions must be a list of exact tool names');
   }
   if (typeof g.auditLog !== 'string' || !g.auditLog.trim()) {
     errors.push('guard.auditLog must be a non-empty path');
@@ -135,13 +137,24 @@ function validateConfig(cfg) {
   return errors;
 }
 
-function readJsonSafe(file) {
+function readConfigFile(file) {
+  let raw;
   try {
-    if (!fs.existsSync(file)) return null;
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (_) {
-    return null;
+    raw = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
   }
+  let cfg;
+  try { cfg = JSON.parse(raw.replace(/^\uFEFF/, '')); } catch (_) {}
+  if (!isObj(cfg)) throw Object.assign(new Error('config must be a JSON object'), { code: 'BADCONFIG' });
+  return cfg;
+}
+
+function assertValidConfig(cfg) {
+  const errors = validateConfig(cfg);
+  if (errors.length) throw Object.assign(new Error('invalid config: ' + errors.join('; ')), { code: 'BADCONFIG' });
+  return cfg;
 }
 
 function globalConfigPath(home) {
@@ -150,23 +163,18 @@ function globalConfigPath(home) {
 
 function loadConfig(cwd, home) {
   let cfg = mergeDeep(DEFAULTS, {});
-  const globalUser = readJsonSafe(globalConfigPath(home));
+  const globalUser = readConfigFile(globalConfigPath(home));
   if (globalUser) cfg = mergeDeep(cfg, globalUser);
   if (cwd) {
-    const projectUser = readJsonSafe(path.join(cwd, '.engine-switch.json'));
+    const projectUser = readConfigFile(path.join(cwd, '.engine-switch.json'));
     if (projectUser) cfg = mergeDeep(cfg, projectUser);
   }
-  return cfg;
+  return assertValidConfig(cfg);
 }
 
 function writeConfig(rawCfg, filePath, home) {
-  const cfg = mergeDeep(DEFAULTS, rawCfg || {});
-  const errors = validateConfig(cfg);
-  if (errors.length) {
-    const err = new Error('invalid config:\n - ' + errors.join('\n - '));
-    err.code = 'BADCONFIG';
-    throw err;
-  }
+  if (!isObj(rawCfg)) throw Object.assign(new Error('config must be an object'), { code: 'BADCONFIG' });
+  const cfg = assertValidConfig(mergeDeep(DEFAULTS, rawCfg));
   const dest = filePath || globalConfigPath(home);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.writeFileSync(dest, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
@@ -188,7 +196,8 @@ function resolveAuditLogPath(auditLog, home) {
 function main(argv) {
   const args = argv || [];
   if (args[0] === '--validate' && args[1]) {
-    const raw = JSON.parse(fs.readFileSync(args[1], 'utf8'));
+    const raw = readConfigFile(args[1]);
+    if (!raw) throw new Error('config file not found');
     const cfg = mergeDeep(DEFAULTS, raw);
     const errors = validateConfig(cfg);
     if (errors.length) {

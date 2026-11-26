@@ -11,14 +11,14 @@ const VALID_ROLES = ['helper', 'reviewer'];
 
 // PURE.
 function isValidSessionId(id) {
-  return typeof id === 'string' && /^[A-Za-z0-9_-]{8,}$/.test(id);
+  return typeof id === 'string' && id === id.trim() && /^[A-Za-z0-9_-]{8,128}$/.test(id);
 }
 
 // PURE.
 function defaultChatKey(cfg) {
   const d = (cfg && cfg.defaults) || {};
   return {
-    helper: KNOWN_ENGINES.includes(d.helper) ? d.helper : 'claude',
+    helper: cfg && cfg.newChatsMode === 'all-chats' && KNOWN_ENGINES.includes(d.helper) ? d.helper : 'claude',
     reviewer: KNOWN_ENGINES.includes(d.reviewer) ? d.reviewer : 'codex',
     history: [],
   };
@@ -26,19 +26,34 @@ function defaultChatKey(cfg) {
 
 function chatKeyPath(sessionId, home) {
   if (!isValidSessionId(sessionId)) return null;
-  return path.join(engineHome(home), 'chats', sessionId + '.json');
+  const id = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(sessionId)
+    ? sessionId.toLowerCase()
+    : sessionId;
+  return path.join(engineHome(home), 'chats', id + '.json');
 }
 
 function readChatKey(sessionId, home, cfg) {
-  const resolvedCfg = cfg || loadConfig(process.cwd(), home);
+  const resolvedCfg = cfg || loadConfig(undefined, home);
   const def = defaultChatKey(resolvedCfg);
   const file = chatKeyPath(sessionId, home);
-  if (!file || !fs.existsSync(file)) return def;
+  if (!file) return null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return Object.assign({}, def, parsed);
-  } catch (_) {
-    return def;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const fields = Object.keys(parsed).map((name) => name.trim().toLowerCase());
+    if (!fields.some((name) => VALID_ROLES.includes(name))
+      || fields.some((name) => !VALID_ROLES.includes(name) && name !== 'history')) return null;
+    const key = { ...def, history: Array.isArray(parsed.history) ? parsed.history : [] };
+    for (const role of VALID_ROLES) {
+      const names = Object.keys(parsed).filter((name) => name.trim().toLowerCase() === role);
+      if (names.length === 0) continue;
+      if (names.length !== 1 || typeof parsed[names[0]] !== 'string') return null;
+      key[role] = parsed[names[0]].trim().toLowerCase();
+      if (!KNOWN_ENGINES.includes(key[role])) return null;
+    }
+    return key;
+  } catch (err) {
+    return err.code === 'ENOENT' ? def : null;
   }
 }
 
@@ -47,6 +62,7 @@ function updateChatKey(sessionId, role, engine, reason, home, cfg) {
   if (!VALID_ROLES.includes(role)) throw new Error('role must be helper or reviewer');
   if (!KNOWN_ENGINES.includes(engine)) throw new Error('engine must be codex, gemini or claude');
   const current = readChatKey(sessionId, home, cfg);
+  if (!current) throw new Error('invalid chat key; restore it before switching engines');
   const entry = {
     at: new Date().toISOString(),
     role,
@@ -58,7 +74,13 @@ function updateChatKey(sessionId, role, engine, reason, home, cfg) {
   current[role] = engine;
   const file = chatKeyPath(sessionId, home);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(current, null, 2) + '\n', 'utf8');
+  const temp = file + '.' + process.pid + '.tmp';
+  try {
+    fs.writeFileSync(temp, JSON.stringify(current, null, 2) + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
   return current;
 }
 
@@ -79,6 +101,10 @@ function main(argv) {
   }
   if (!role) {
     const key = readChatKey(chat);
+    if (!key) {
+      console.error('invalid chat key');
+      return 2;
+    }
     console.log('chat ' + chat.slice(0, 8) + ': helper ' + key.helper + ' | reviewer ' + key.reviewer);
     return 0;
   }
@@ -101,4 +127,11 @@ module.exports = {
   parseArgs,
 };
 
-if (require.main === module) process.exit(main(process.argv.slice(2)));
+if (require.main === module) {
+  try {
+    process.exitCode = main(process.argv.slice(2));
+  } catch (err) {
+    console.error(err.message);
+    process.exitCode = 2;
+  }
+}

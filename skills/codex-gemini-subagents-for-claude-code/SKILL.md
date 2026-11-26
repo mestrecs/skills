@@ -11,7 +11,7 @@ Run helper (subagent) tasks from Claude Code on Codex CLI, Gemini CLI, or Antigr
 
 - The main Claude chat only **writes the request file and verifies the result**.
 - The helper executes the bounded task in its own worktree and writes a short answer file.
-- Claude subagents run only with a verified quota-ceiling fallback (`CLAUDE-ONLY: ceiling`) or an exclusive Claude tool (`CLAUDE-ONLY: tool <name>`), and every exception is logged for audit.
+- The guard permits recognized Claude launches with a verified quota-ceiling fallback (`CLAUDE-ONLY: ceiling`) or an exclusive Claude tool (`CLAUDE-ONLY: tool <name>`), and every exception is logged for audit.
 
 ## When to use
 
@@ -24,11 +24,11 @@ Use this skill when:
 
 ## First-run setup
 
-If `~/.engine-switch/config.json` does not exist (or the user says `"reconfigure"`), run the setup interview before delegating work. Full questions, defaults, and config schema are in `references/setup.md`.
+On first use or when the user asks to reconfigure, run the setup interview and retain their existing answers. Full questions, defaults, and config schema are in `references/setup.md`.
 
 1. Run `node scripts/detect.cjs` (read-only). Show the detected CLIs (`claude`, `codex`, `gemini`, `agy`), versions, and login state in plain words for the user to confirm or correct. Give official install/sign-in instructions for any missing tool; never ask for keys or tokens.
-2. Ask Round 1 and Round 2 questions (engines, default per role, opt-in vs all-chats default, fallback chain, quota ceilings and watchdog behavior, ceiling marker validity, models/effort, concurrency, shared-account share %, allowed pass-through agents, tool exceptions, audit log path).
-3. Write `~/.engine-switch/config.json` (verified against `scripts/config.cjs`), show a one-screen summary, print the `settings.json` hook snippet (`matcher: "Agent|Task|Workflow|Bash"`), and verify `scripts/hooks/engine-guard.cjs` runs cleanly against a sample input.
+2. Ask Round 1 and Round 2 questions (engines, default per role, opt-in vs all-chats default, fallback chain, quota ceilings and watchdog behavior, ceiling marker validity, models/effort, concurrency, shared-account share %, allowed Claude-only named agents, tool exceptions, audit log path).
+3. Write `~/.engine-switch/config.json` (verified against `scripts/config.cjs`), show a one-screen summary, print the `settings.json` hook snippet (`matcher: "Agent|Task|Workflow|Bash|PowerShell|Monitor"`), and verify `scripts/hooks/engine-guard.cjs` runs cleanly against a sample input.
 
 ## Per-chat engine switch
 
@@ -43,7 +43,7 @@ Reply in one line with what the script printed. To inspect the current chat's ke
 node scripts/engine-switch.cjs --chat <session-id>
 ```
 
-How to find `<session-id>`: check the `session_id` passed to hooks, the current conversation/transcript folder UUID, or `~/.engine-switch/chats/`. Without a chat file, `engine-switch.cjs` falls back to `defaults.helper` in `~/.engine-switch/config.json` (which defaults to `claude` so new chats are opt-in unless changed during setup).
+How to find `<session-id>`: check the `session_id` passed to hooks, the current conversation/transcript folder UUID, or `~/.engine-switch/chats/`. Without a chat file, `engine-switch.cjs` falls back to `defaults.helper` in `~/.engine-switch/config.json` (used in `all-chats` mode. In `opt-in` mode an unset helper stays on `claude`).
 
 ## How to delegate a helper task
 
@@ -76,7 +76,7 @@ How to find `<session-id>`: check the `session_id` passed to hooks, the current 
 
 ## Write mode vs delivery mode
 
-- **Write mode (default)**: Codex runs with `-s workspace-write` and `network_access=false` (plus `writable_roots` for Windows worktree `.git` common dir); Gemini/agy runs with `--sandbox` and a per-run temporary `permissions.json` scoped to `<dir>/**`.
+- **Write mode (default)**: Codex runs with `-s workspace-write` and `network_access=false` (plus `--add-dir` for a linked worktree's shared Git directory); Gemini/agy runs with `--sandbox` and Antigravity receives a temporary request file.
 - **Delivery mode (`--deliver`)**: disables the network/write sandbox (`danger-full-access` for Codex, omits `--sandbox` for Gemini/agy) so a bounded delivery or PR script can push. Keep direct `git push` prohibited in the prompt; delegate delivery through a dedicated delivery script.
 
 ## Quota ceilings, fallback chain, and valid Claude exceptions
@@ -93,6 +93,6 @@ When that happens, the runner writes `~/.engine-switch/ceilings/<engine>.json` (
 
 **The only two valid exceptions** when the chat key is `codex` or `gemini` (searched across the entire serialized `tool_input`):
 1. `CLAUDE-ONLY: ceiling` — exact line, valid only when the required recent ceiling marker(s) exist on disk.
-2. `CLAUDE-ONLY: tool <name>` — where `<name>` matches a configured exclusive Claude tool (`mcp|browser|chrome|supabase|database` by default).
+2. `CLAUDE-ONLY: tool <name>` — where `<name>` exactly matches a user-configured Claude-only tool or the allowed named agent being invoked.
 
 Allowed exceptions are appended to `~/.engine-switch/claude-exceptions.jsonl`. Any other `Agent`, `Task`, `fork`, named agent not in `guard.allowAgents`, `Workflow`, or `Bash` `claude -p` / `claude --print` call is denied by the hook. See `references/guard-hook.md` and `references/engines.md` for details.

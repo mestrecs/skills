@@ -1,7 +1,7 @@
 'use strict';
 // Read-only detection of installed CLIs (claude, codex, gemini, agy), hook presence, and lean agent file.
 // Never opens or prints credential files or .env.
-const cp = require('child_process');
+const { spawnCliSync } = require('./cli-process.cjs');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -33,16 +33,7 @@ function runVersion(bin) {
   const upper = bin.toUpperCase();
   const stub = process.env['MODEL_ROUTER_BIN_' + upper] || process.env['ENGINE_SWITCH_BIN_' + upper];
   const opts = { encoding: 'utf8', timeout: 10000, windowsHide: true };
-  let r;
-  if (stub) {
-    if (stub.endsWith('.cjs') || stub.endsWith('.js')) {
-      r = cp.spawnSync(process.execPath, [stub, '--version'], opts);
-    } else {
-      r = cp.spawnSync(stub, ['--version'], Object.assign({}, opts, { shell: process.platform === 'win32' }));
-    }
-  } else {
-    r = cp.spawnSync(bin, ['--version'], Object.assign({}, opts, { shell: process.platform === 'win32' }));
-  }
+  const r = spawnCliSync(stub || bin, ['--version'], opts);
   const ok = !r.error && r.status === 0;
   return { ok, output: (r.stdout || '') + '\n' + (r.stderr || '') };
 }

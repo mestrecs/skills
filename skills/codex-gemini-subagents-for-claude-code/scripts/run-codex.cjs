@@ -6,8 +6,10 @@
 // Exit 3: at quota ceiling (before start, mid-run via watchdog, or quota error in output) + writes ceiling marker.
 const cp = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { loadConfig } = require('./config.cjs');
+const { spawnCli, killTree, reserveHelper } = require('./cli-process.cjs');
+const { engineHome, loadConfig } = require('./config.cjs');
 const { readQuotaFile, checkQuota, markCeiling, looksLikeQuotaError } = require('./ceiling.cjs');
 
 const WATCHDOG_INTERVAL_MS = 60 * 1000;
@@ -42,12 +44,11 @@ function buildCodexArgs(opts) {
   } else {
     base.push('-s', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=false');
     if (opts.gitCommonDir) {
-      // Single quotes inside TOML string literal: cmd.exe strips double quotes on Windows.
-      base.push('-c', "sandbox_workspace_write.writable_roots=['" + opts.gitCommonDir + "']");
+      base.push('--add-dir', opts.gitCommonDir);
     }
   }
-  if (opts.model) base.push('-m', opts.model);
-  if (opts.effort) base.push('-c', 'model_reasoning_effort="' + opts.effort + '"');
+  if (opts.model && opts.model !== '<latest>') base.push('-m', opts.model);
+  if (opts.effort) base.push('-c', 'model_reasoning_effort=' + JSON.stringify(opts.effort));
   base.push('-C', opts.dir, '-o', opts.answerFile, '-');
   return base;
 }
@@ -65,28 +66,6 @@ function detectGitCommonDir(dir) {
   }
 }
 
-function killTree(child) {
-  try {
-    if (!child || !child.pid) return;
-    if (process.platform === 'win32') {
-      cp.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      child.kill('SIGKILL');
-    }
-  } catch (_) {}
-}
-
-function spawnCodex(args) {
-  const stub = process.env.ENGINE_SWITCH_BIN_CODEX;
-  if (stub) {
-    if (stub.endsWith('.cjs') || stub.endsWith('.js')) {
-      return cp.spawn(process.execPath, [stub].concat(args), { windowsHide: true });
-    }
-    return cp.spawn(stub, args, { windowsHide: true, shell: process.platform === 'win32' });
-  }
-  return cp.spawn('codex', args, { windowsHide: true, shell: process.platform === 'win32' });
-}
-
 function checkCodexCeiling(cfg) {
   const quota = readQuotaFile('codex');
   const reason = checkQuota(quota, cfg.switchOn, cfg.codex);
@@ -101,17 +80,21 @@ function main() {
   const initial = checkCodexCeiling(cfg);
   if (parsed.quotaOnly) {
     if (initial.reason) {
-      markCeiling('codex', initial.reason);
+      if (!markCeiling('codex', initial.reason)) {
+        console.error('could not write quota ceiling marker');
+        process.exitCode = 1;
+        return;
+      }
       console.log(JSON.stringify({ ok: false, atCeiling: true, engine: 'codex', reason: initial.reason, quota: initial.quota }));
-      process.exit(3);
+      process.exitCode = 3;      return;
     }
     console.log(JSON.stringify({ ok: true, atCeiling: false, engine: 'codex', quota: initial.quota }));
-    process.exit(0);
+    process.exitCode = 0;    return;
   }
 
   if (parsed.positional.length < 3) {
     console.error('usage: run-codex.cjs <dir> <request.md> <answer.txt> [--deliver] [--model <m>] [--effort <e>]');
-    process.exit(2);
+    process.exitCode = 2;    return;
   }
 
   const dir = path.resolve(parsed.positional[0]);
@@ -120,22 +103,29 @@ function main() {
 
   if (!fs.existsSync(dir) || !fs.existsSync(requestFile)) {
     console.error('directory or request file not found');
-    process.exit(2);
+    process.exitCode = 2;    return;
   }
 
   if (initial.reason) {
-    markCeiling('codex', initial.reason);
+    if (!markCeiling('codex', initial.reason)) {
+      console.error('could not write quota ceiling marker');
+      process.exitCode = 1;
+      return;
+    }
     console.log(JSON.stringify({ ok: false, atCeiling: true, engine: 'codex', reason: initial.reason }));
-    process.exit(3);
+    process.exitCode = 3;    return;
   }
 
   const prompt = fs.readFileSync(requestFile, 'utf8') + HELPER_RULES(dir);
   const gitInfo = detectGitCommonDir(dir);
-  const model = parsed.model || (cfg.codex && cfg.codex.model) || 'gpt-6.2-sol';
+  const model = parsed.model || (cfg.codex && cfg.codex.model) || '<latest>';
   const effort = parsed.effort || (cfg.codex && cfg.codex.effort) || 'medium';
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-codex-'));
+  const stageAnswer = path.join(stageDir, 'answer.txt');
+  const cleanup = () => { try { fs.rmSync(stageDir, { recursive: true, force: true }); } catch (_) {} };
   const args = buildCodexArgs({
     dir,
-    answerFile,
+    answerFile: stageAnswer,
     deliver: parsed.deliver,
     model,
     effort,
@@ -144,10 +134,18 @@ function main() {
   });
 
   const startedAt = Date.now();
-  const child = spawnCodex(args);
-  let stdout = '';
+  let child;
+  try {
+    process.once('exit', reserveHelper(path.join(engineHome(), 'helper-slots', 'codex'), cfg.codex.maxConcurrent));
+    process.once('exit', cleanup);
+    child = spawnCli(process.env.ENGINE_SWITCH_BIN_CODEX || 'codex', args, { cwd: dir });
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
   let stderr = '';
-  child.stdout.on('data', (d) => { stdout = (stdout + d).slice(-16384); });
+  child.stdout.resume();
+  child.stderr.setEncoding('utf8');
   child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-16384); });
   child.stdin.on('error', () => {});
   child.stdin.end(prompt);
@@ -179,7 +177,7 @@ function main() {
     clearInterval(watchdog);
     clearTimeout(hardTimer);
     console.log(JSON.stringify({ ok: false, engine: 'codex', reason: String(err.message || err) }));
-    process.exit(1);
+    process.exitCode = 1;    return;
   });
 
   child.on('close', (status) => {
@@ -187,31 +185,41 @@ function main() {
     clearTimeout(hardTimer);
     const seconds = Math.round((Date.now() - startedAt) / 1000);
     let answer = '';
-    try { answer = fs.readFileSync(answerFile, 'utf8'); } catch (_) {}
+    try { answer = fs.readFileSync(stageAnswer, 'utf8'); } catch (_) {}
 
     if (stoppedKind === 'ceiling') {
-      markCeiling('codex', stoppedReason);
+      if (!markCeiling('codex', stoppedReason)) {
+        console.error('could not write quota ceiling marker');
+        process.exitCode = 1;
+        return;
+      }
       console.log(JSON.stringify({ ok: false, atCeiling: true, stoppedMidRun: true, engine: 'codex', seconds, reason: stoppedReason }));
-      process.exit(3);
+      process.exitCode = 3;      return;
     }
     if (stoppedKind === 'timeout') {
       console.log(JSON.stringify({ ok: false, timedOut: true, engine: 'codex', seconds, reason: stoppedReason }));
-      process.exit(1);
+      process.exitCode = 1;      return;
     }
 
-    const quotaErr = (status !== 0 && looksLikeQuotaError(stderr + '\n' + stdout + '\n' + answer))
-      || (status === 0 && !answer.trim() && looksLikeQuotaError(stderr + '\n' + stdout));
+    const quotaErr = (status !== 0 || !answer.trim()) && looksLikeQuotaError(stderr);
     if (quotaErr) {
-      markCeiling('codex', 'quota or rate-limit error in codex output');
+      if (!markCeiling('codex', 'quota or rate-limit error in codex output')) {
+        console.error('could not write quota ceiling marker');
+        process.exitCode = 1;
+        return;
+      }
       console.log(JSON.stringify({ ok: false, atCeiling: true, quotaError: true, engine: 'codex', exitCode: status, seconds }));
-      process.exit(3);
+      process.exitCode = 3;      return;
     }
 
     const ok = status === 0 && Boolean(answer.trim());
+    if (ok) {
+      fs.mkdirSync(path.dirname(answerFile), { recursive: true });
+      fs.writeFileSync(answerFile, answer, 'utf8');
+    }
+
     console.log(JSON.stringify({ ok, engine: 'codex', exitCode: status, seconds }));
-    if (answer.trim()) console.log(answer.slice(0, 3000));
-    else if (stderr.trim()) console.log(stderr.slice(-1500));
-    process.exit(ok ? 0 : 1);
+    process.exitCode = ok ? 0 : 1;
   });
 }
 
@@ -224,4 +232,11 @@ module.exports = {
   checkCodexCeiling,
 };
 
-if (require.main === module) main();
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error(err.message);
+    process.exitCode = 1;
+  }
+}

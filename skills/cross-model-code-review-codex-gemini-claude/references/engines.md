@@ -18,45 +18,36 @@ How `scripts/review.cjs` selects an engine, runs it safely inside the target wor
 
 ## Codex CLI (`codex`)
 
-Default: model `gpt-6.2-sol`, reasoning effort `medium`.
+Default: the CLI-selected model and `medium` reasoning effort.
 
 `review.cjs` invokes:
 
 ```bash
 codex exec [--skip-git-repo-check] -s workspace-write \
   -c sandbox_workspace_write.network_access=false \
-  [-c "sandbox_workspace_write.writable_roots=['<git-common-dir>']"] \
+  [--add-dir <git-common-dir>] \
   -m <model> -c model_reasoning_effort="<effort>" -C <dir> -o <answer-file> -
 ```
 
 - The review prompt is piped via `stdin`.
 - Network access is disabled (`network_access=false`) so the reviewer cannot push or leak data.
-- On Windows linked worktrees, the shared git metadata directory (`git rev-parse --path-format=absolute --git-common-dir`) lives outside `<dir>`, so `writable_roots` uses single quotes inside the TOML literal because `cmd.exe` strips double quotes.
+- On Windows linked worktrees, the shared git metadata directory (`git rev-parse --path-format=absolute --git-common-dir`) lives outside `<dir>`, so the runner passes it as a separate `--add-dir` argument.
 - Environment variables whose names look like secrets (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, etc.) are stripped from the child process environment.
 
 ## Gemini CLI and Antigravity CLI (`gemini` / `agy`)
 
-Default: CLI `gemini`, model `gemini-4-hydrogen-high`.
+Default: CLI `gemini` with its configured model.
 
 Two Google CLIs exist:
 - `gemini` ([Gemini CLI](https://geminicli.com/docs/)): API-key and enterprise accounts (since 18 June 2026). Invoked with `[-m <model>] -p <short-instruction> --sandbox` and the full prompt on `stdin`.
 - `agy` (Antigravity CLI): consumer Google sign-in accounts. Invoked with:
-  `agy -p <prompt> --model <model> --mode accept-edits --output-format json --print-timeout <n>s --settings <permissions.json> --add-dir <tempDir> --add-dir <dir> --sandbox`
+  `agy -p <prompt> --model <model> --mode accept-edits --output-format json --print-timeout <n>s --add-dir <tempDir> --sandbox`
 
 ### Per-run permissions and the `agy` global-allow pitfall
 
-For `agy`, `review.cjs` writes the full prompt to a temporary `request.md` and creates an isolated per-run `permissions.json`:
-
-```json
-{
-  "permissions": {
-    "allow": ["command(*)", "read_file(*)", "write_file(<dir>/**)"],
-    "deny": []
-  }
-}
-```
-
-- **Known pitfall:** Do not put a broad `write_file(*)` or global allow-all rule in your global `agy` settings file. Global allow rules leak into every helper and reviewer run and let it write outside `<dir>`. Always keep permissive rules scoped to the temporary per-run `--settings` file, which `review.cjs` deletes when the run ends.
+For `agy`, `review.cjs` writes the prompt into a temporary directory and adds it with
+`--add-dir`. The command requests the sandbox. Its availability depends on the host.
+Gemini and Claude return JSON, and the review runner reads provider errors separately from model answers.
 
 ## Claude Code (`claude`)
 

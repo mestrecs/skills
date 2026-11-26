@@ -11,7 +11,7 @@ const geminiRunner = require('../run-gemini.cjs');
 const CODEX_SCRIPT = path.resolve(__dirname, '..', 'run-codex.cjs');
 const GEMINI_SCRIPT = path.resolve(__dirname, '..', 'run-gemini.cjs');
 
-test('buildCodexArgs: write mode, delivery mode, non-repo check, and Windows writable_roots', () => {
+test('buildCodexArgs: write mode, delivery mode, non-repo check, and linked worktree directory', () => {
   const writeRepo = codexRunner.buildCodexArgs({
     dir: '/tmp/wt',
     answerFile: '/tmp/ans.txt',
@@ -24,7 +24,7 @@ test('buildCodexArgs: write mode, delivery mode, non-repo check, and Windows wri
   assert.ok(!writeRepo.includes('--skip-git-repo-check'));
   assert.ok(writeRepo.includes('workspace-write'));
   assert.ok(writeRepo.includes('sandbox_workspace_write.network_access=false'));
-  assert.ok(writeRepo.includes("sandbox_workspace_write.writable_roots=['/tmp/repo/.git']"));
+  assert.equal(writeRepo[writeRepo.indexOf('--add-dir') + 1], '/tmp/repo/.git');
   assert.strictEqual(writeRepo[writeRepo.length - 1], '-');
 
   const writeNonRepo = codexRunner.buildCodexArgs({
@@ -51,11 +51,7 @@ test('buildCodexArgs: write mode, delivery mode, non-repo check, and Windows wri
   assert.ok(!deliver.includes('workspace-write'));
 });
 
-test('buildPermissionsObject and buildGeminiArgs for gemini and agy', () => {
-  const perms = geminiRunner.buildPermissionsObject('/tmp/work');
-  assert.deepStrictEqual(perms.permissions.allow, ['command(*)', 'read_file(*)', 'write_file(/tmp/work/**)']);
-  assert.deepStrictEqual(perms.permissions.deny, []);
-
+test('Gemini and agy use documented flags and reject partial JSON answers', () => {
   const agyWrite = geminiRunner.buildGeminiArgs({
     cli: 'agy',
     model: 'gemini-4-hydrogen-high',
@@ -66,7 +62,10 @@ test('buildPermissionsObject and buildGeminiArgs for gemini and agy', () => {
     requestPosix: '/tmp/es-1/request.md',
     permissionsPosix: '/tmp/es-1/permissions.json',
   });
-  assert.ok(agyWrite.includes('--settings'));
+  assert.equal(agyWrite[agyWrite.indexOf('--settings') + 1], '/tmp/es-1/permissions.json');
+  assert.ok(agyWrite.includes('/tmp/work'));
+  assert.deepEqual(geminiRunner.buildPermissionsObject('/tmp/work').permissions.allow, ['command(*)', 'read_file(*)', 'write_file(/tmp/work/**)']);
+  assert.equal(agyWrite[agyWrite.indexOf('--add-dir') + 1], '/tmp/es-1');
   assert.ok(agyWrite.includes('--sandbox'));
   assert.ok(agyWrite.includes('900s'));
 
@@ -91,6 +90,8 @@ test('buildPermissionsObject and buildGeminiArgs for gemini and agy', () => {
   });
   assert.ok(gemWrite.includes('--sandbox'));
   assert.ok(!gemWrite.includes('--settings'));
+  assert.ok(gemWrite.includes('auto_edit'));
+  assert.deepEqual(geminiRunner.readJsonResult('{"response":"partial","finished_reason":"print_timeout"}'), { text: '', error: '' });
 });
 
 test('run-codex: --quota-only, fake binary success, quota error, and mid-run watchdog kill', async () => {
@@ -116,6 +117,8 @@ if (mode === 'quota') {
   process.exit(1);
 }
 if (mode === 'sleep') {
+  fs.writeFileSync(require('path').join(process.env.ENGINE_SWITCH_HOME, 'quota-codex.json'),
+    JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
   setTimeout(() => {}, 30000);
 } else {
   if (!prompt.includes('never print, log or commit secrets')) process.exit(9);
@@ -161,10 +164,7 @@ if (mode === 'sleep') {
     });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
-    setTimeout(() => {
-      fs.writeFileSync(path.join(home, 'quota-codex.json'), JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
-    }, 350);
-    const code = await new Promise((resolve) => child.on('close', resolve));
+    const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     assert.strictEqual(code, 3);
     assert.match(out, /MID-RUN CEILING/);
     assert.strictEqual(fs.existsSync(path.join(home, 'ceilings', 'codex.json')), true);
@@ -173,7 +173,7 @@ if (mode === 'sleep') {
   }
 });
 
-test('run-gemini: agy permissions, sandbox vs --deliver, and ceiling exit 3', () => {
+test('run-gemini: agy request file, sandbox vs --deliver, and ceiling exit 3', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'es-rungemini-'));
   const home = path.join(tmp, 'home');
   const work = path.join(tmp, 'work');
@@ -191,10 +191,12 @@ if (process.env.FAKE_MODE === 'quota') {
   console.error('Quota exceeded for quota metric');
   process.exit(1);
 }
-const sIdx = a.indexOf('--settings');
-const perms = sIdx >= 0 ? JSON.parse(fs.readFileSync(a[sIdx + 1], 'utf8')) : null;
+if (!a.includes('--settings')) process.exit(9);
+const perms = JSON.parse(fs.readFileSync(a[a.indexOf('--settings') + 1], 'utf8')).permissions.allow;
+if (!perms.some((p) => /^write_file\\(.+\\/\\*\\*\\)$/.test(p)) || perms.some((p) => p === 'write_file(*)')) process.exit(8);
+const request = fs.readFileSync(require('path').join(a[a.indexOf('--add-dir') + 1], 'request.md'), 'utf8');
 const hasSandbox = a.includes('--sandbox');
-console.log(JSON.stringify({ response: JSON.stringify({ hasSandbox, allow: perms ? perms.permissions.allow : null }) }));
+console.log(JSON.stringify({ response: JSON.stringify({ hasSandbox, request }) }));
 `);
 
   const env = (extra) => Object.assign({}, process.env, {
@@ -211,7 +213,7 @@ console.log(JSON.stringify({ response: JSON.stringify({ hasSandbox, allow: perms
     assert.strictEqual(writeRun.status, 0, writeRun.stdout);
     const meta1 = JSON.parse(fs.readFileSync(ans, 'utf8'));
     assert.strictEqual(meta1.hasSandbox, true);
-    assert.ok(meta1.allow.some((x) => x.startsWith('write_file(')));
+    assert.match(meta1.request, /Check module b.js/);
 
     // 2. Delivery mode omits --sandbox
     const delivRun = cp.spawnSync(process.execPath, [GEMINI_SCRIPT, work, req, ans, '--deliver'], { env: env(), encoding: 'utf8' });

@@ -23,7 +23,7 @@ function makeTempRepoWithBranch(tmp) {
   fs.mkdirSync(repo, { recursive: true });
   git(repo, ['init', '-b', 'main']);
   git(repo, ['config', 'user.name', 'tester']);
-  git(repo, ['config', 'user.email', 'tester@example.com']);
+  git(repo, ['config', 'user.email', 'tester@users.noreply.github.com']);
   fs.writeFileSync(path.join(repo, 'app.js'), 'function greet(name) { return "hi " + name; }\nmodule.exports = { greet };\n');
   git(repo, ['add', 'app.js']);
   git(repo, ['commit', '-m', 'init']);
@@ -103,7 +103,9 @@ test('validateReviewerChanges, hasSecretPattern, and stripSecretEnv', () => {
 });
 
 test('buildReviewCommand builds expected CLI args for codex, gemini, agy, and claude', () => {
-  const cfg = cfgMod.DEFAULTS;
+  const cfg = cfgMod.mergeDeep(cfgMod.DEFAULTS, {
+    codex: { model: 'codex-test' }, gemini: { model: 'Gemini Test' },
+  });
   const cx = r.buildReviewCommand('codex', cfg, {
     dir: '/tmp/wt',
     answerFile: '/tmp/ans.txt',
@@ -113,13 +115,13 @@ test('buildReviewCommand builds expected CLI args for codex, gemini, agy, and cl
   assert.strictEqual(cx.bin, 'codex');
   assert.ok(cx.args.includes('workspace-write'));
   assert.ok(cx.args.includes('sandbox_workspace_write.network_access=false'));
-  assert.ok(cx.args.includes("sandbox_workspace_write.writable_roots=['/tmp/repo/.git']"));
-  assert.ok(cx.args.includes('gpt-6.2-sol'));
+  assert.equal(cx.args[cx.args.indexOf('--add-dir') + 1], '/tmp/repo/.git');
+  assert.ok(cx.args.includes('codex-test'));
 
   const gm = r.buildReviewCommand('gemini', cfg, { cli: 'gemini' });
   assert.strictEqual(gm.bin, 'gemini');
   assert.ok(gm.args.includes('--sandbox'));
-  assert.ok(gm.args.includes('gemini-4-hydrogen-high'));
+  assert.ok(gm.args.includes('Gemini Test'));
 
   const agy = r.buildReviewCommand('gemini', cfg, {
     cli: 'agy',
@@ -130,12 +132,13 @@ test('buildReviewCommand builds expected CLI args for codex, gemini, agy, and cl
     timeoutSec: 900,
   });
   assert.strictEqual(agy.bin, 'agy');
-  assert.ok(agy.args.includes('--settings'));
+  assert.ok(!agy.args.includes('--settings'));
+  assert.equal(agy.args[agy.args.indexOf('--add-dir') + 1], '/tmp/es');
   assert.ok(agy.args.includes('--sandbox'));
 
   const cl = r.buildReviewCommand('claude', cfg, {});
   assert.strictEqual(cl.bin, 'claude');
-  assert.deepStrictEqual(cl.args, ['-p', '--model', 'sonnet', '--effort', 'medium']);
+  assert.deepStrictEqual(cl.args, ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--model', 'sonnet', '--effort', 'medium']);
 });
 
 test('PR review with fake codex commits reviewer fix and writes reviews/REVIEW-PR<n>.md for new head', () => {
@@ -198,7 +201,6 @@ test('fallback chain: codex at quota ceiling -> gemini logged out -> claude -p s
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(path.join(userHome, '.codex'), { recursive: true });
   fs.mkdirSync(path.join(userHome, '.claude'), { recursive: true });
-  // Note: NO userHome/.gemini -> gemini is logged out!
   const { repo } = makeTempRepoWithBranch(tmp);
 
   fs.writeFileSync(path.join(home, 'quota-codex.json'), JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
@@ -210,8 +212,11 @@ const fs = require('fs');
 const a = process.argv.slice(2);
 if (a.includes('--version')) { console.log('${name} 2.0.0'); process.exit(0); }
 const prompt = fs.readFileSync(0, 'utf8');
-console.log('ARGS=' + JSON.stringify(a));
-console.log('VERDICT: BLOCK');
+if ('${name}' === 'gemini') {
+  console.log(JSON.stringify({ error: { message: 'Authentication required' } }));
+  process.exit(1);
+}
+console.log(JSON.stringify({ result: 'ARGS=' + JSON.stringify(a) + '\\nVERDICT: BLOCK' }));
 `);
     return p;
   };
@@ -256,7 +261,7 @@ setTimeout(() => {}, 10000);
   const okClaude = path.join(tmp, 'ok-claude.cjs');
   fs.writeFileSync(okClaude, `'use strict';
 if (process.argv.includes('--version')) { console.log('claude 1.0.0'); process.exit(0); }
-console.log('VERDICT: APPROVE');
+console.log(JSON.stringify({ result: 'VERDICT: APPROVE' }));
 `);
   const missing = path.join(tmp, 'does-not-exist.cjs');
 
@@ -298,12 +303,14 @@ test('watchdog mid-run ceiling kill triggers fallback to gemini, and concurrency
   const sleepCodex = path.join(tmp, 'sleep-codex.cjs');
   fs.writeFileSync(sleepCodex, `'use strict';
 if (process.argv.includes('--version')) { console.log('codex 1.0.0'); process.exit(0); }
+require('fs').writeFileSync(require('path').join(process.env.ENGINE_SWITCH_HOME, 'quota-codex.json'),
+  JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
 setTimeout(() => {}, 20000);
 `);
   const okGemini = path.join(tmp, 'ok-gemini.cjs');
   fs.writeFileSync(okGemini, `'use strict';
 if (process.argv.includes('--version')) { console.log('gemini 1.0.0'); process.exit(0); }
-console.log('Gemini checked the diff.\\nVERDICT: APPROVE');
+console.log(JSON.stringify({ response: 'Gemini checked the diff.\\nVERDICT: APPROVE' }));
 `);
 
   fs.writeFileSync(path.join(home, 'quota-codex.json'), JSON.stringify({ windowPct: 30, weekPct: 20, at: Date.now() }));
@@ -319,13 +326,10 @@ console.log('Gemini checked the diff.\\nVERDICT: APPROVE');
     const child = cp.spawn(process.execPath, [REVIEW_SCRIPT, '--base', 'main', '--dir', repo], { env });
     let stdout = '';
     child.stdout.on('data', (d) => { stdout += d; });
-    setTimeout(() => {
-      fs.writeFileSync(path.join(home, 'quota-codex.json'), JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
-    }, 350);
-    const code = await new Promise((resolve) => child.on('close', resolve));
+    const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     assert.strictEqual(code, 0);
     assert.match(stdout, /ENGINE: gemini/);
-    assert.ok(fs.existsSync(path.join(home, 'ceilings', 'codex.json')));
+    assert.match(JSON.parse(fs.readFileSync(path.join(home, 'ceilings', 'codex.json'), 'utf8')).reason, /^MID-RUN CEILING/);
 
     // Concurrency limit of 3 per engine: occupy all 3 slots, 4th with --max-wait 0 fails
     const slotsDir = path.join(home, 'review-slots', 'gemini');
@@ -377,7 +381,7 @@ fs.writeFileSync(out, 'VERDICT: APPROVE\\n');
   }
 });
 
-test('agy CLI permissions.json, claude chat key direct routing, and bad-verdict does not fall back', () => {
+test('agy CLI request file, claude chat key direct routing, and bad-verdict does not fall back', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'es-rev-agy-'));
   const home = path.join(tmp, 'home');
   fs.mkdirSync(home, { recursive: true });
@@ -388,10 +392,9 @@ test('agy CLI permissions.json, claude chat key direct routing, and bad-verdict 
 const fs = require('fs');
 const a = process.argv.slice(2);
 if (a.includes('--version')) { console.log('agy 1.0.0'); process.exit(0); }
-const sIdx = a.indexOf('--settings');
-const perms = sIdx >= 0 ? JSON.parse(fs.readFileSync(a[sIdx + 1], 'utf8')) : null;
-if (!a.includes('--sandbox') || !perms) process.exit(9);
-console.log(JSON.stringify({ response: 'Checked agy permissions.\\nVERDICT: APPROVE' }));
+const request = fs.readFileSync(require('path').join(a[a.indexOf('--add-dir') + 1], 'request.md'), 'utf8');
+if (!a.includes('--sandbox') || a.includes('--settings') || !request.includes('independent reviewer')) process.exit(9);
+console.log(JSON.stringify({ response: 'Checked the request.\\nVERDICT: APPROVE' }));
 `);
 
   const badCodex = path.join(tmp, 'bad-codex.cjs');
@@ -406,7 +409,7 @@ fs.writeFileSync(out, 'Looks okay I guess, forgot verdict line.');
   const okClaude = path.join(tmp, 'ok-claude.cjs');
   fs.writeFileSync(okClaude, `'use strict';
 if (process.argv.includes('--version')) { console.log('claude 1.0.0'); process.exit(0); }
-console.log('Fresh claude session.\\nVERDICT: APPROVE');
+console.log(JSON.stringify({ result: 'Fresh claude session.\\nVERDICT: APPROVE' }));
 `);
 
   const env = (extra) => Object.assign({}, process.env, {
@@ -445,4 +448,12 @@ console.log('Fresh claude session.\\nVERDICT: APPROVE');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('review result keeps error evidence separate from model text and rejects partial answers', () => {
+  assert.equal(r.looksLikeAuthError('review the sign in flow'), false);
+  assert.equal(r.looksLikeAuthError('authentication required'), true);
+  assert.deepEqual(r.readReviewResult('gemini', '{"response":"VERDICT: APPROVE","finished_reason":"print_timeout"}'), { text: '', error: '' });
+  assert.deepEqual(r.readReviewResult('claude', '{"is_error":true,"result":"not logged in"}'), { text: '', error: 'not logged in' });
+  assert.equal(r.validateReviewerChanges('?? example/.env.test\0', 'reviews/REVIEW.md').ok, false);
 });

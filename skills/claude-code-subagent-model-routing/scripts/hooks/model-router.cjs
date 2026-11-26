@@ -12,17 +12,16 @@ const fs = require('fs');
 const { DEFAULTS, DEFAULT_READING_VERBS, loadConfig, mergeDeep } = require('../config.cjs');
 
 const HANDLED_TOOLS = new Set(['Agent', 'Task']);
-const ATTEMPT_RE = /^[ \t]*ATTEMPT:[ \t]*(\d+)\b/gmi;
+const ATTEMPT_RE = /^[ \t]*ATTEMPT:[ \t]*([1-9]\d*)[ \t]*\r?$/gmi;
 const TOOLS_ALL_RE = /^[ \t]*TOOLS:[ \t]*all\b/mi;
-const JOB_SEARCH_RE = /^[ \t]*JOB:[ \t]*search\b/mi;
-const JOB_JUDGMENT_RE = /^[ \t]*JOB:[ \t]*judgment\b([^\n]*[a-z0-9][^\n]*)/mi;
+const JOB_SEARCH_RE = /^[ \t]*JOB:[ \t]*search[ \t]*\r?$/mi;
+const JOB_JUDGMENT_RE = /^[ \t]*JOB:[ \t]*judgment[ \t]+[-\u2013\u2014][ \t]*([^\r\n]+)$/mi;
 const MCP_REF_RE = /mcp__([a-z0-9_-]+)__/gi;
 
-const STOP_AFTER_THREE =
-  'This item has already failed 3 attempts (Sonnet medium, Sonnet high, Opus high). ' +
-  'Do not launch attempt 4. Stop here and report in one line to the user: ' +
-  '(1) what broke, (2) what was already tried, and (3) what decision or help is needed from them. ' +
-  'Record the blocker in a persistent note if needed, then move on to the next task.';
+function stopReason(maxAttempts) {
+  return 'This item has reached the configured limit of ' + maxAttempts + ' attempts. ' +
+    'Stop here and report in one line to the user what broke, what was tried, and what help is needed.';
+}
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -109,7 +108,7 @@ function formatMissingJobDenial(routingCfg) {
     'Default effort is ' + defaultEffort + '; ATTEMPT: 2 raises effort to ' + retryEffort + '; ' +
     'Opus requires ATTEMPT: ' + opusMin + ' (otherwise downgraded to Sonnet). ' +
     'Add ONE line to the prompt and retry: ' +
-    '"JOB: search" (find, read, list, count, extract; runs on ' + searchModel + ', ~9x cheaper) or ' +
+    '"JOB: search" (find, read, list, count, extract; runs on ' + searchModel + ') or ' +
     '"JOB: judgment - <what it must conclude>" (diagnose, review, write or edit code, decide across sources). ' +
     'Treat search findings from a small model as leads, not proof: open the source before acting.'
   );
@@ -133,24 +132,25 @@ function normalizeRoutingConfig(config) {
 
 // PURE. Returns { deny: string }, { updatedInput: object }, or null (nothing to change).
 function decide(input, config, leanAvailableArg) {
-  if (!input || !HANDLED_TOOLS.has(input.tool_name)) return null;
+  if (!input || typeof input.tool_name !== 'string' || !HANDLED_TOOLS.has(input.tool_name.trim())) return null;
   const ti = input.tool_input;
   if (!ti || typeof ti !== 'object') return null;
 
   const mr = normalizeRoutingConfig(config);
-  const prompt = String(ti.prompt || '');
+  const prompt = typeof ti.prompt === 'string' ? ti.prompt : '';
   const attempt = parseAttempt(prompt);
   if (attempt > mr.maxAttempts) {
-    return { deny: STOP_AFTER_THREE };
+    return { deny: stopReason(mr.maxAttempts) };
   }
 
-  const type = ti.subagent_type;
-  if (type === 'fork') return null;
+  const type = typeof ti.subagent_type === 'string' ? ti.subagent_type.trim() : '';
+  const normalizedType = type.toLowerCase();
+  if (normalizedType === 'fork') return null;
 
   const leanName = (mr.leanHelper && mr.leanHelper.agentName) || 'helper';
-  const generalTypes = new Set(['general-purpose', 'claude', leanName]);
-  const isExplore = type === 'Explore';
-  const isGeneral = type == null || type === '' || generalTypes.has(type);
+  const generalTypes = new Set(['', 'general-purpose', 'claude', leanName.toLowerCase()]);
+  const isExplore = normalizedType === 'explore';
+  const isGeneral = generalTypes.has(normalizedType);
   const isNamed = !isExplore && !isGeneral;
 
   const readingRe = buildReadingRegex(mr.readingVerbs);
@@ -159,8 +159,8 @@ function decide(input, config, leanAvailableArg) {
 
   if (isExplore || isGeneral) {
     const judgmentMatch = prompt.match(JOB_JUDGMENT_RE);
-    if (judgmentMatch) {
-      const reason = judgmentMatch[1].replace(/^[\s\-–—:(]+/, '').trim();
+    const reason = judgmentMatch?.[1].replace(/^[\s"'(\[]+/, '').trim();
+    if (reason && /[a-z0-9]/i.test(reason)) {
       if (readingRe.test(reason)) {
         if (!isExplore) return { deny: formatReadingReasonDenial(mr) };
         runOnSearchModel = true;
@@ -191,9 +191,8 @@ function decide(input, config, leanAvailableArg) {
       patch.subagent_type = leanName;
     }
 
-    if (runOnSearchModel && ti.model !== mr.searchModel) {
-      patch.model = mr.searchModel;
-    }
+    const model = runOnSearchModel ? mr.searchModel : ti.model || 'sonnet';
+    if (ti.model !== model) patch.model = model;
   }
 
   const shouldCapOpus = !isNamed || Boolean(mr.capNamedAgentOpus);
@@ -204,22 +203,28 @@ function decide(input, config, leanAvailableArg) {
 
   const finalModel = String(patch.model || ti.model || '');
   const isSearchResult = finalModel === mr.searchModel || /haiku/i.test(finalModel);
-  if (ti.effort == null && !isSearchResult) {
-    const highList = new Set((mr.highEffortAgents || []).map((a) => String(a).trim()));
-    const alwaysHigh = type != null && highList.has(String(type).trim());
-    patch.effort = (!alwaysHigh && attempt < 2) ? mr.defaultEffort : mr.retryEffort;
+  const updated = { ...ti, ...patch };
+  if (runOnSearchModel && finalModel === 'haiku' && ti.effort !== undefined) {
+    delete updated.effort;
+    return { updatedInput: updated };
+  }
+  if ((!isNamed || ti.effort == null) && !isSearchResult) {
+    const alwaysHigh = isNamed && mr.highEffortAgents.includes(type);
+    const effort = (!alwaysHigh && attempt < 2) ? mr.defaultEffort : mr.retryEffort;
+    if (ti.effort !== effort) updated.effort = patch.effort = effort;
   }
 
-  if (Object.keys(patch).length === 0) return null;
-  return { updatedInput: Object.assign({}, ti, patch) };
+  return Object.keys(patch).length ? { updatedInput: updated } : null;
 }
 
 if (require.main === module) {
+  process.stdin.setEncoding('utf8');
   let raw = '';
   process.stdin.on('data', (chunk) => { raw += chunk; });
+  process.stdin.on('error', () => {});
   process.stdin.on('end', () => {
     try {
-      const input = JSON.parse(raw || '{}');
+      const input = JSON.parse(raw.replace(/^\uFEFF/, ''));
       const cwd = input.cwd || process.cwd();
       const cfg = loadConfig(cwd);
       const lean = isLeanAvailable(input, cfg.modelRouting);
@@ -228,7 +233,6 @@ if (require.main === module) {
         process.stdout.write(JSON.stringify({
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
-            permissionDecision: 'allow',
             updatedInput: res.updatedInput,
           },
         }));
@@ -244,13 +248,11 @@ if (require.main === module) {
     } catch (_) {
       // Internal error: print nothing and exit 0 so the chat is never blocked.
     }
-    process.exit(0);
   });
 }
 
 module.exports = {
   HANDLED_TOOLS,
-  STOP_AFTER_THREE,
   buildReadingRegex,
   parseAttempt,
   hasExternalMcp,

@@ -1,6 +1,6 @@
 # First-Run Setup
 
-Run this interview only when `~/.engine-switch/config.json` (or `$ENGINE_SWITCH_HOME/config.json`) does not exist, or when the user asks to `"reconfigure"`. Never ask for a password, API key, or token in chat, and never open `.env`.
+Run this interview on first use of this skill or when the user asks to reconfigure. If a shared config already exists, reuse the answers it contains and ask for the settings introduced by this skill. Never ask for a password, API key, or token in chat, and never open `.env`.
 
 ## Step 0: Detect installed tools
 
@@ -10,7 +10,7 @@ Run:
 node scripts/detect.cjs
 ```
 
-It prints JSON with `os`, `node`, `configExists`, `hookConfigured`, `gh` (`installed`, `authed`), and `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`). Show the findings in plain words and ask the user to confirm or correct.
+It prints JSON with `os`, `node`, `configExists`, `hookConfigured`, `gh` (`installed`, `authed`), and `engines` (`claude`, `codex`, `gemini`, `agy` — each with `installed`, `version`, `authed`). Show the findings and ask the user to confirm. For engine CLIs, a settings folder suggests prior setup and does not prove current authentication.
 
 If a selected CLI is missing or not signed in, show its official link and command:
 - **Codex CLI**: [Codex CLI docs](https://developers.openai.com/codex/cli) (run `codex` and pick a sign-in method)
@@ -35,31 +35,36 @@ Always show the default value that will be used if the user skips a question, an
    - Default reviewer: `codex` (Recommended when you author in Claude so reviews use a different vendor), `gemini`, or `claude`.
    - New chats mode: `opt-in` (Recommended — keeps existing/new chats on Claude helpers unless switched per chat; `defaults.helper: "claude"`) or `all-chats` (sets `defaults.helper` to `codex` or `gemini`).
 3. **Ordered fallback chain (`review.order` and `fallback`)?**
-   - Default: `["codex", "gemini", "claude"]` (Recommended: Codex `gpt-6.2-sol` medium first, Gemini `gemini-4-hydrogen-high` second, Claude Sonnet last). Must not be empty.
+   - Default: `["codex", "gemini", "claude"]` (Recommended: Codex first, Gemini second, Claude Sonnet last). Must not be empty.
    - `fallback` (helper fallback chain): default `["codex", "claude"]`.
 4. **When to switch (`switchOn.mode`, `maxWindowPct`, `maxWeekPct`)?**
-   - `percent-or-error` (Recommended): switch when `quota-<engine>.json` meets or exceeds `maxWindowPct` (default `90`) or `maxWeekPct` (default `80`), OR on a CLI quota/rate-limit error. Leaves headroom for interactive work.
+   - `percent-or-error` (Recommended): switch when `quota-<engine>.json` meets or exceeds `maxWindowPct` (default `90`) or `maxWeekPct` (default `80`), OR on a CLI quota/rate-limit error. Ask for both percentages separately (0 to 100).
    - `error-only`: switch only when the CLI returns a real quota/rate-limit error.
 5. **Watchdog & ceiling proof lifetime (`stopMidRun`, `ceilingValidMinutes`)?**
    - `stopMidRun`: `true` (Recommended — stops a running review mid-way if the quota file crosses the ceiling so it can fall back) or `false`.
    - `ceilingValidMinutes`: `30` (Recommended) or custom positive number.
 6. **Max concurrent reviews per engine (`review.maxConcurrent`)?**
    - `3` (Recommended — caps simultaneous reviews per engine so a shared account is not drained), `2`, or `1`.
-7. **Guard hook exceptions & audit log (`guard.allowAgents`, `guard.toolExceptions`, `guard.auditLog`)?** (Only needed if using the `PreToolUse` guard hook in Claude Code)
-   - `allowAgents`: default `["web-fetch", "claude-code-guide", "statusline-setup"]`.
-   - `toolExceptions`: default `["mcp", "browser", "chrome", "supabase", "database"]`.
+7. **Review timeout and audit location (`review.timeoutMinutes` and `review.auditLog`)?**
+   - Timeout: `60` minutes by default, or choose a positive duration up to 35,791 minutes.
+   - Audit log: `~/.engine-switch/review-history.jsonl` or a custom path.
+   - Optionally set `review.<engine>.maxConcurrent` for individual engines.
+8. **Guard hook exceptions & audit log (`guard.allowAgents`, `guard.toolExceptions`, `guard.auditLog`)?** (Only needed if using the `PreToolUse` guard hook in Claude Code)
+   - `allowAgents`: default `[]`.
+   - `toolExceptions`: default `[]`.
    - `auditLog`: default `"~/.engine-switch/claude-exceptions.jsonl"`.
 
 ## Round 2 (per-engine details, only for selected engines)
 
 - **Codex (`codex`)**:
-  - Model: `gpt-6.2-sol` (Recommended), or custom model string.
+  - Model: `<latest>` (CLI default, recommended), or custom model string.
   - Effort: `medium` (Recommended — balances depth and quota cost), `low`, or `high`.
   - Max concurrent helpers (`codex.maxConcurrent`): `2` (Recommended) or `1`.
   - Shared account (`sharedAccount`): `false` (Recommended) or `true`. If `true`, ask their own `sharePct` (`1–100`, e.g., `50`).
 - **Gemini (`gemini`)**:
   - CLI binary (`cli`): `gemini` (Recommended for API-key/enterprise) or `agy` (consumer Google sign-in via Antigravity CLI).
-  - Model: `gemini-4-hydrogen-high` (Recommended), `gemini-4-carbon-high`, or custom model string.
+  - Model: `<latest>` (CLI default, recommended), or a model name supported by the selected CLI.
+  - Effort for `agy` only: CLI default or a supported level.
   - Max concurrent helpers (`gemini.maxConcurrent`): `1` (Recommended).
   - Shared account (`sharedAccount`): `false` (Recommended) or `true` (with `sharePct` `1–100`).
 - **Claude (`claude`)**:
@@ -69,12 +74,12 @@ Always show the default value that will be used if the user skips a question, an
 
 ## Finish: write config, validate, and verify hook
 
-1. Write `~/.engine-switch/config.json` (comment-free JSON; example: `examples/engine-switch.config.json`) and validate it:
+1. Merge these answers into `~/.engine-switch/config.json`, retaining other skills' settings. Write it (comment-free JSON; example: `examples/engine-switch.config.json`) and validate it:
    ```bash
    node scripts/config.cjs --validate ~/.engine-switch/config.json
    ```
 2. Show a one-screen summary of enabled engines, default reviewer, fallback chain, quota thresholds, and max concurrent reviews.
-3. If the user also uses the `PreToolUse` guard hook in Claude Code (`codex-gemini-subagents-for-claude-code`), print the `settings.json` snippet (`matcher: "Agent|Task|Workflow|Bash"`, command `node <subagents-skill-dir>/scripts/hooks/engine-guard.cjs`) and verify it exits `0` on sample JSON stdin.
+3. If the user also uses the `PreToolUse` guard hook in Claude Code (`codex-gemini-subagents-for-claude-code`), print the `settings.json` snippet (`matcher: "Agent|Task|Workflow|Bash|PowerShell|Monitor"`, command `node "<subagents-skill-dir>/scripts/hooks/engine-guard.cjs"`) and verify it exits `0` on sample JSON stdin.
 
 ## Config schema (`~/.engine-switch/config.json`)
 
@@ -91,23 +96,26 @@ Always show the default value that will be used if the user skips a question, an
 | `switchOn.maxWeekPct` | Number `0..100` | `80` |
 | `switchOn.stopMidRun` | Boolean | `true` |
 | `switchOn.ceilingValidMinutes` | Positive number | `30` |
-| `codex.model` | Model string | `"gpt-6.2-sol"` |
+| `codex.model` | Model string | `"<latest>"` |
 | `codex.effort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |
 | `codex.maxConcurrent` | Integer `>= 1` | `2` |
 | `codex.sharedAccount` | Boolean | `false` |
 | `codex.sharePct` | Number `1..100` | `100` |
 | `gemini.cli` | `"gemini"` or `"agy"` | `"gemini"` |
-| `gemini.model` | Model string | `"gemini-4-hydrogen-high"` |
+| `gemini.model` | Model string | `"<latest>"` |
+| `gemini.effort` | Optional `low`, `medium` or `high`, for `agy` | CLI default |
 | `gemini.maxConcurrent` | Integer `>= 1` | `1` |
 | `gemini.sharedAccount` | Boolean | `false` |
 | `gemini.sharePct` | Number `1..100` | `100` |
 | `review.order` | Non-empty ordered list of engines | `["codex", "gemini", "claude"]` |
 | `review.maxConcurrent` | Integer `>= 1` | `3` |
-| `review.timeoutMinutes` | Positive number | `60` |
+| `review.timeoutMinutes` | Positive number up to 35,791 | `60` |
+| `review.<engine>.maxConcurrent` | Optional integer `>= 1` | `review.maxConcurrent` |
+| `review.auditLog` | JSONL path | `~/.engine-switch/review-history.jsonl` |
 | `review.claude.model` | Model string | `"sonnet"` |
 | `review.claude.effort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |
-| `guard.allowAgents` | Array of lowercase agent names | `["web-fetch", "claude-code-guide", "statusline-setup"]` |
-| `guard.toolExceptions` | Array of tool exception keywords | `["mcp", "browser", "chrome", "supabase", "database"]` |
+| `guard.allowAgents` | Array of lowercase agent names | `[]` |
+| `guard.toolExceptions` | Array of exact tool names | `[]` |
 | `guard.auditLog` | Path to JSONL audit log | `"~/.engine-switch/claude-exceptions.jsonl"` |
 
 Skill format reference: [Agent Skills](https://agentskills.io).

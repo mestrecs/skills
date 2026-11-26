@@ -13,16 +13,16 @@ This document details every decision made by `scripts/hooks/model-router.cjs`.
 
 | Category | Matched `subagent_type` values | Behavior |
 | --- | --- | --- |
-| `Explore` | Exact string `"Explore"` | Defaults to `modelRouting.searchModel` (`"haiku"`) without needing `JOB:`. Switches to judgment mode only with a valid `JOB: judgment - <reason>` that does not start with a reading verb. |
+| `Explore` | Type `"Explore"`, ignoring case and surrounding whitespace | Defaults to `modelRouting.searchModel` (`"haiku"`) without needing `JOB:`. Switches to judgment mode only with a valid `JOB: judgment - <reason>` that does not start with a reading verb. |
 | General | `undefined`, `""`, `"general-purpose"`, `"claude"`, or `modelRouting.leanHelper.agentName` (`"helper"`) | Requires `JOB: search` or valid `JOB: judgment - <reason>`. Denies missing `JOB:` or reading-verb judgment reasons. Eligible for optional lean helper swap. |
-| Named agent | Any other non-empty string (`"Plan"`, `"claude-code-guide"`, custom `.claude/agents/*.md` agents, case-variant `"explore"`, etc.) | Keeps its own `model` (defined in its agent file or `tool_input.model`). Hook only sets `effort` when missing and final model is not Haiku (unless `capNamedAgentOpus: true` is configured). |
+| Named agent | Any other non-empty string (`"Plan"`, `"claude-code-guide"`, custom `.claude/agents/*.md` agents, etc.) | Keeps its own `model` (defined in its agent file or `tool_input.model`). Hook only sets `effort` when missing and final model is not Haiku (unless `capNamedAgentOpus: true` is configured). |
 | `fork` | Exact string `"fork"` | Untouched unless `ATTEMPT: 4+` is present (which denies it). `fork` inherits parent conversation and ignores model/effort overrides. |
 
 ## 3. `JOB:` line rules
 
 Both directives must start at the beginning of a line (optional leading spaces or tabs). Mentioning `JOB: search` or `JOB: judgment` in the middle of a sentence does not count.
 
-- `JOB: search` — forces `model: "haiku"` (or configured `searchModel`). Effort is left untouched when running on Haiku.
+- `JOB: search` — forces `model: "haiku"` (or configured `searchModel`). The hook removes an explicit effort when routing a search to Haiku.
 - `JOB: judgment - <what it must conclude>` (colon `:` or parentheses `(...)` after `judgment` are also accepted, as long as alphanumeric text follows on the same line):
   - Rejects empty reasons (`JOB: judgment` or `JOB: judgment -   `).
   - Rejects reasons starting with any configured reading verb (default: `read`, `reading`, `find`, `finding`, `locate`, `locating`, `list`, `listing`, `count`, `counting`, `extract`, `extracting`, `search`, `searching`, `inventory`, `inventorying`, optionally preceded by `just`, `only`, `simply`, `need to`, or `to`).
@@ -39,7 +39,7 @@ Good vs. rejected judgment lines:
 
 The hook scans all lines matching `^[ \t]*ATTEMPT:[ \t]*(\d+)\b` and uses the highest number (`1` when absent):
 
-| Attempt | Effort (when `tool_input.effort` is omitted and model != Haiku) | Opus (`general-purpose` / `Explore`) |
+| Attempt | Effort for judgment on a model that supports it | Opus (`general-purpose` / `Explore`) |
 | --- | --- | --- |
 | `1` (default) | `medium` (`high` for agents in `modelRouting.highEffortAgents`) | Downgraded to `sonnet` |
 | `2` | `high` | Downgraded to `sonnet` |

@@ -14,13 +14,13 @@ const path = require('path');
 const { KNOWN_ENGINES, engineHome, loadConfig } = require('./config.cjs');
 const { readQuotaFile, checkQuota, markCeiling, looksLikeQuotaError, appendAuditLog } = require('./ceiling.cjs');
 const { readChatKey } = require('./engine-switch.cjs');
-const { loginFolderCandidates } = require('./detect.cjs');
+const { spawnCli, spawnCliSync, killTree } = require('./cli-process.cjs');
 
 const GIT_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR'];
 const WATCHDOG_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MINUTES = 60;
 const DEFAULT_MAX_CONCURRENT = 3;
-const AUTH_ERROR_RE = /not logged in|please log\s*in|login required|auth(?:entication)? (?:required|failed|expired)|unauthorized|sign in|run .*login|invalid api key|api key.*not found/i;
+const AUTH_ERROR_RE = /\b(?:not (?:logged|signed) in|please (?:log|sign)\s+in|login required|authentication (?:required|failed|expired)|invalid api key|(?:http(?: error)?|status(?: code)?)\s*[:=]?\s*401|unauthenticated)\b/i;
 const ENV_SECRET_NAME_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIAL)/i;
 const SECRET_VALUE_PATTERNS = [
   /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
@@ -68,8 +68,8 @@ function parseArgs(argv) {
       throw new Error('unknown argument: ' + a);
     }
   }
-  if (!out.pr && !out.base) throw new Error('must pass --pr <n> or --base <ref>');
-  if (out.pr && !/^\d+$/.test(out.pr)) throw new Error('--pr must be a positive integer');
+  if ((!out.pr && !out.base) || (out.pr && out.base)) throw new Error('must pass --pr <n> or --base <ref>');
+  if (out.pr && !/^[1-9]\d*$/.test(out.pr)) throw new Error('--pr must be a positive integer');
   if (out.engine && !KNOWN_ENGINES.includes(out.engine)) {
     throw new Error('--engine must be one of: ' + KNOWN_ENGINES.join(', '));
   }
@@ -86,8 +86,8 @@ function parseArgs(argv) {
 
 // PURE. Build ordered engine chain. Moves preferred to the front; claude goes straight to claude.
 function buildEngineChain(preferred, configOrder, enabledEngines, overrideEngine) {
-  if (overrideEngine) return KNOWN_ENGINES.includes(overrideEngine) ? [overrideEngine] : [];
   const enabled = Array.isArray(enabledEngines) && enabledEngines.length ? enabledEngines : KNOWN_ENGINES;
+  if (overrideEngine) return enabled.includes(overrideEngine) && KNOWN_ENGINES.includes(overrideEngine) ? [overrideEngine] : [];
   const pref = KNOWN_ENGINES.includes(preferred) ? preferred : 'codex';
   if (pref === 'claude') return enabled.includes('claude') ? ['claude'] : [];
   const order = Array.isArray(configOrder) && configOrder.length ? configOrder : ['codex', 'gemini', 'claude'];
@@ -183,7 +183,7 @@ function buildPrompt(p) {
     'Read the actual code, tests, and callers in the working tree. Do NOT trust the PR title or author description; verify everything directly against the source.',
     'Hunt for: wrong behavior, missed edge cases, broken callers, security/auth regressions, secret exposure, data loss, and missing or weak tests.',
     'You are inside the branch worktree. You may inspect any source file and run targeted checks.',
-    'If you find a clear defect you can fix safely, fix it and leave the edit in the working tree (or commit only the files you changed without --no-verify). Never push, never run git add -A, never delete or rename files, and never edit .git, .github, .githooks, .claude, or .codex.',
+    'If you find a clear defect you can fix safely, fix it and leave the edit in the working tree. Never push, never run git add -A, never delete or rename files, and never edit .git, .github, .githooks, .claude, or .codex.',
     'Do not rewrite style or refactor unrelated code.',
     'Security rule: never print, log, or commit secrets, API keys, tokens, passwords, or environment variables; never read .env.',
     'Before your final line, list findings with severity (P1/P2/P3), file:line, what you checked, what you fixed, and what you could not prove.',
@@ -202,31 +202,21 @@ function buildPrompt(p) {
   ].join('\n');
 }
 
-// PURE.
-function buildPermissionsObject(dirPosix) {
-  return {
-    permissions: {
-      allow: ['command(*)', 'read_file(*)', 'write_file(' + dirPosix + '/**)'],
-      deny: [],
-    },
-  };
-}
-
 // PURE. Build CLI arguments for each supported reviewer engine.
 function buildReviewCommand(engine, cfg, opts) {
   const o = opts || {};
   if (engine === 'codex') {
     const cx = (cfg && cfg.codex) || {};
-    const model = cx.model && cx.model !== '<latest>' ? cx.model : 'gpt-6.2-sol';
+    const model = cx.model !== '<latest>' ? cx.model : null;
     const effort = cx.effort || 'medium';
     const args = ['exec'];
     if (!o.isRepo) args.push('--skip-git-repo-check');
     args.push('-s', 'workspace-write', '-c', 'sandbox_workspace_write.network_access=false');
     if (o.gitCommonDir) {
-      args.push('-c', "sandbox_workspace_write.writable_roots=['" + o.gitCommonDir + "']");
+      args.push('--add-dir', o.gitCommonDir);
     }
     if (model) args.push('-m', model);
-    if (effort) args.push('-c', 'model_reasoning_effort="' + effort + '"');
+    if (effort) args.push('-c', 'model_reasoning_effort=' + JSON.stringify(effort));
     args.push('-C', o.dir, '-o', o.answerFile, '-');
     return { bin: 'codex', args, stdinMode: 'prompt' };
   }
@@ -234,20 +224,19 @@ function buildReviewCommand(engine, cfg, opts) {
   if (engine === 'gemini') {
     const gm = (cfg && cfg.gemini) || {};
     const cli = o.cli || gm.cli || 'gemini';
-    const model = gm.model && gm.model !== '<latest>' ? gm.model : 'gemini-4-hydrogen-high';
+    const model = gm.model !== '<latest>' ? gm.model : null;
     if (cli === 'agy') {
       const prompt = 'Read the entire file ' + o.requestPosix + ' and follow its instructions. Only write files inside ' + o.dirPosix + '.';
       return {
         bin: 'agy',
         args: [
           '-p', prompt,
-          '--model', model,
+          ...(model ? ['--model', model] : []),
+          ...(gm.effort ? ['--effort', gm.effort] : []),
           '--mode', 'accept-edits',
           '--output-format', 'json',
           '--print-timeout', String(o.timeoutSec || 1500) + 's',
-          '--settings', o.permissionsPosix,
           '--add-dir', o.tempDirPosix,
-          '--add-dir', o.dirPosix,
           '--sandbox',
         ],
         stdinMode: 'none',
@@ -255,7 +244,7 @@ function buildReviewCommand(engine, cfg, opts) {
     }
     const args = [];
     if (model) args.push('-m', model);
-    args.push('-p', 'Follow the code review instructions provided on stdin.', '--sandbox');
+    args.push('-p', 'Follow the code review instructions provided on stdin.', '--sandbox', '--approval-mode', 'auto_edit', '--output-format', 'json');
     return { bin: 'gemini', args, stdinMode: 'prompt' };
   }
 
@@ -263,7 +252,7 @@ function buildReviewCommand(engine, cfg, opts) {
     const rc = (cfg && cfg.review && cfg.review.claude) || {};
     const model = rc.model && rc.model !== '<latest>' ? rc.model : 'sonnet';
     const effort = rc.effort || 'medium';
-    const args = ['-p'];
+    const args = ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits'];
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
     return { bin: 'claude', args, stdinMode: 'prompt' };
@@ -272,22 +261,18 @@ function buildReviewCommand(engine, cfg, opts) {
   throw new Error('unknown engine: ' + engine);
 }
 
-// PURE. Extract text from agy JSON output or plain stdout.
-function extractOutputText(cli, stdout) {
-  const raw = String(stdout || '').trim();
-  if (!raw) return '';
-  if (cli === 'agy') {
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed.response === 'string') return parsed.response;
-      if (typeof parsed.text === 'string') return parsed.text;
-      if (typeof parsed.output === 'string') return parsed.output;
-      if (parsed.error) return String(parsed.error.message || parsed.error);
-    } catch (_) {
-      // fall back to raw stdout
-    }
+// Read response and error fields separately so ordinary model prose cannot trigger fallback.
+function readReviewResult(engine, stdout) {
+  try {
+    const data = JSON.parse(stdout);
+    const failure = data.is_error || data.error || (data.finished_reason && !['completed', 'stop', 'success'].includes(data.finished_reason));
+    const message = engine === 'claude' ? data.result : data.response;
+    const error = data.error ? [data.error.type, data.error.code && 'status code ' + data.error.code, data.error.message || data.error].join(' ')
+      : (data.is_error ? String(data.result || '') : '');
+    return { text: !failure && typeof message === 'string' ? message : '', error };
+  } catch (_) {
+    return { text: '', error: '' };
   }
-  return raw;
 }
 
 // PURE. Parse `git status --porcelain -z` output.
@@ -313,9 +298,9 @@ function validateReviewerChanges(porcelain, reviewRelPath) {
   const target = String(reviewRelPath || '').replace(/\\/g, '/');
   const files = [];
   for (const it of parsePorcelain(porcelain)) {
-    const p = it.path.replace(/\\/g, '/').replace(/^\.\//, '');
+    const p = it.path;
     if (p === target) continue;
-    if (/^\.(codex|git|github|githooks|claude)(\/|$)/i.test(p)) {
+    if (/(?:^|\/)\.env(?:[./]|$)/i.test(p) || /^\.(codex|git|github|githooks|claude)(\/|$)/i.test(p)) {
       return { ok: false, reason: 'reviewer modified forbidden path: ' + p };
     }
     if (/D/.test(it.xy) || /R/.test(it.xy)) {
@@ -390,7 +375,6 @@ function runSync(cmd, args, opts) {
     env: o.env || cleanEnv(),
     input: o.input,
     encoding: 'utf8',
-    shell: Boolean(o.shell),
     timeout: o.timeout,
     maxBuffer: 128 * 1024 * 1024,
     windowsHide: true,
@@ -413,11 +397,9 @@ function gitOut(dir, args) {
 
 function gh(args, opts) {
   const stub = process.env.ENGINE_SWITCH_GH;
-  if (stub) {
-    if (stub.endsWith('.cjs') || stub.endsWith('.js')) return runSync(process.execPath, [stub].concat(args), opts);
-    return runSync(stub, args, Object.assign({}, opts || {}, { shell: process.platform === 'win32' }));
-  }
-  return runSync('gh', args, opts);
+  if (!stub) return runSync('gh', args, opts);
+  const result = spawnCliSync(stub, args, { ...opts, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
 }
 
 function getBinStub(bin) {
@@ -425,25 +407,7 @@ function getBinStub(bin) {
 }
 
 function checkVersion(bin) {
-  const stub = getBinStub(bin);
-  if (stub) {
-    if (stub.endsWith('.cjs') || stub.endsWith('.js')) return runSync(process.execPath, [stub, '--version'], { timeout: 15000 });
-    return runSync(stub, ['--version'], { timeout: 15000, shell: process.platform === 'win32' });
-  }
-  return runSync(bin, ['--version'], { timeout: 15000, shell: process.platform === 'win32' });
-}
-
-function hasLoginState(engine, bin) {
-  const stub = getBinStub(bin);
-  const customHome = process.env.ENGINE_SWITCH_USER_HOME;
-  if (stub && !customHome) return true;
-  const userHome = customHome || os.homedir();
-  if (engine === 'gemini' && bin === 'gemini' && (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY)) {
-    return true;
-  }
-  if (engine === 'claude' && process.env.ANTHROPIC_API_KEY) return true;
-  if (engine === 'codex' && process.env.OPENAI_API_KEY) return true;
-  return loginFolderCandidates(bin).some((rel) => fs.existsSync(path.join(userHome, rel)));
+  return spawnCliSync(getBinStub(bin) || bin, ['--version'], { encoding: 'utf8', timeout: 15000 });
 }
 
 function pidAlive(pid) {
@@ -501,35 +465,8 @@ function tryAcquireSlot(dir, max, meta, stuckMs) {
   return null;
 }
 
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 function sleepAsync(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function killTree(child) {
-  try {
-    if (!child || !child.pid) return;
-    if (process.platform === 'win32') {
-      cp.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      child.kill('SIGKILL');
-    }
-  } catch (_) {}
-}
-
-function spawnEngine(bin, args, cwd, env) {
-  const stub = getBinStub(bin);
-  const opts = { cwd, env, windowsHide: true };
-  if (stub) {
-    if (stub.endsWith('.cjs') || stub.endsWith('.js')) {
-      return cp.spawn(process.execPath, [stub].concat(args), opts);
-    }
-    return cp.spawn(stub, args, Object.assign({}, opts, { shell: process.platform === 'win32' }));
-  }
-  return cp.spawn(bin, args, Object.assign({}, opts, { shell: process.platform === 'win32' }));
 }
 
 function detectGitCommonDir(dir) {
@@ -541,7 +478,7 @@ function detectGitCommonDir(dir) {
 function findCallers(dir, diff) {
   const lines = [];
   for (const sym of extractSymbols(diff)) {
-    const r = git(dir, ['grep', '-n', '-w', '-e', sym, '--', '.']);
+    const r = git(dir, ['grep', '-n', '-w', '-e', sym, '--', '.', ':!.env*', ':!**/.env*']);
     if (r.status === 0 && r.stdout.trim()) {
       lines.push('### ' + sym, r.stdout.split(/\r?\n/).filter(Boolean).slice(0, 6).join('\n'));
     }
@@ -550,25 +487,33 @@ function findCallers(dir, diff) {
 }
 
 function resolveDiffBase(dir, preferredRef) {
-  const check = git(dir, ['rev-parse', '--verify', preferredRef]);
-  if (check.status === 0) return preferredRef;
+  const check = git(dir, ['rev-parse', '--verify', '--end-of-options', preferredRef + '^{commit}']);
+  if (check.status === 0) return check.stdout.trim();
   if (preferredRef.startsWith('origin/')) {
     const shortRef = preferredRef.slice('origin/'.length);
-    if (git(dir, ['rev-parse', '--verify', shortRef]).status === 0) return shortRef;
+    const local = git(dir, ['rev-parse', '--verify', '--end-of-options', shortRef + '^{commit}']);
+    if (local.status === 0) return local.stdout.trim();
   }
   return null;
 }
 
+function isEnvFile(file) {
+  return /(?:^|[\\/])\.env(?:[./\\]|$)/i.test(file);
+}
+
 function computeDiff(dir, baseRef) {
-  let r = git(dir, ['diff', baseRef + '...HEAD']);
-  let filesR = git(dir, ['diff', '--name-only', baseRef + '...HEAD']);
-  if (r.status !== 0) {
-    r = git(dir, ['diff', baseRef + '..HEAD']);
-    filesR = git(dir, ['diff', '--name-only', baseRef + '..HEAD']);
+  let range = baseRef + '...HEAD';
+  let names = git(dir, ['diff', '--name-only', '-z', range, '--']);
+  if (names.status !== 0) {
+    range = baseRef + '..HEAD';
+    names = git(dir, ['diff', '--name-only', '-z', range, '--']);
   }
-  if (r.status !== 0) throw new Error('git diff failed against ' + baseRef + ': ' + (r.stderr || r.stdout).trim());
-  const files = filesR.status === 0 ? filesR.stdout.split(/\r?\n/).filter(Boolean) : [];
-  return { diff: r.stdout, files };
+  if (names.status !== 0) throw new Error('could not list changes against the base commit');
+  const files = names.stdout.split('\0').filter(Boolean);
+  if (files.some(isEnvFile)) throw new Error('sensitive file in review diff');
+  const diff = git(dir, ['diff', '--no-ext-diff', '--no-textconv', range, '--']);
+  if (diff.status !== 0) throw new Error('could not read review diff');
+  return { diff: diff.stdout, files };
 }
 
 function runSingleEngine(engine, cfg, ctx) {
@@ -577,13 +522,12 @@ function runSingleEngine(engine, cfg, ctx) {
     const bin = engine === 'gemini' ? gmCli : engine;
 
     const ver = checkVersion(bin);
-    if (ver.status !== 0) {
-      resolve({ outcome: 'missing', engine, reason: bin + ' binary not found or --version failed' });
+    if (ver.error?.code === 'ENOENT') {
+      resolve({ outcome: 'missing', engine, reason: bin + ' binary not found' });
       return;
     }
-
-    if (!hasLoginState(engine, bin)) {
-      resolve({ outcome: 'logged-out', engine, reason: bin + ' does not appear to be signed in' });
+    if (ver.status !== 0) {
+      resolve({ outcome: 'error', engine, reason: bin + ' --version failed' });
       return;
     }
 
@@ -606,6 +550,10 @@ function runSingleEngine(engine, cfg, ctx) {
     const stuckMs = (timeoutMin + 15) * 60 * 1000;
 
     let slot = null;
+    let tempDir;
+    const cleanupTemp = () => {
+      if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+    };
     (async () => {
       const waitStarted = Date.now();
       while (!(slot = tryAcquireSlot(slotsDir, maxConcurrent, { pr: ctx.pr || null, base: ctx.baseRef }, stuckMs))) {
@@ -613,29 +561,23 @@ function runSingleEngine(engine, cfg, ctx) {
           resolve({ outcome: 'error', engine, reason: 'timed out waiting for a ' + engine + ' review slot (max ' + maxConcurrent + ' concurrent)' });
           return;
         }
-        await sleepAsync(pollMs);
+        await sleepAsync(Math.min(pollMs, Math.max(0, ctx.maxWaitMs - (Date.now() - waitStarted))));
       }
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-review-'));
-      const cleanupTemp = () => {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
-      };
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'es-review-'));
 
       const answerFile = path.join(tempDir, 'answer.txt');
       const requestFile = path.join(tempDir, 'request.md');
-      const permsFile = path.join(tempDir, 'permissions.json');
       const dirPosix = ctx.dir.split(path.sep).join('/');
       const tempDirPosix = tempDir.split(path.sep).join('/');
 
-      fs.writeFileSync(requestFile, ctx.prompt, 'utf8');
-      fs.writeFileSync(permsFile, JSON.stringify(buildPermissionsObject(dirPosix)), 'utf8');
+      if (bin === 'agy') fs.writeFileSync(requestFile, ctx.prompt, 'utf8');
 
       const cmd = buildReviewCommand(engine, cfg, {
         dir: ctx.dir,
         dirPosix,
         answerFile,
         requestPosix: requestFile.split(path.sep).join('/'),
-        permissionsPosix: permsFile.split(path.sep).join('/'),
         tempDirPosix,
         cli: gmCli,
         timeoutSec: Math.max(60, Math.round(timeoutMs / 1000)),
@@ -645,14 +587,16 @@ function runSingleEngine(engine, cfg, ctx) {
 
       const allowEnv = engine === 'gemini'
         ? ['GEMINI_API_KEY', 'GOOGLE_API_KEY']
-        : (engine === 'claude' ? ['ANTHROPIC_API_KEY'] : []);
+        : (engine === 'claude' ? ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] : ['OPENAI_API_KEY', 'CODEX_API_KEY']);
       const childEnv = stripSecretEnv(process.env, allowEnv);
       if (engine === 'claude') delete childEnv.CLAUDECODE;
 
       const startedAt = Date.now();
-      const child = spawnEngine(cmd.bin, cmd.args, ctx.dir, childEnv);
+      const child = spawnCli(getBinStub(cmd.bin) || cmd.bin, cmd.args, { cwd: ctx.dir, env: childEnv });
       let stdout = '';
       let stderr = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
       child.stdout.on('data', (d) => { stdout += d; });
       child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-16384); });
       child.stdin.on('error', () => {});
@@ -681,11 +625,14 @@ function runSingleEngine(engine, cfg, ctx) {
         }
       }, timeoutMs);
 
+      let finished = false;
       const finish = (res) => {
+        if (finished) return;
+        finished = true;
         if (watchdog) clearInterval(watchdog);
         clearTimeout(hardTimer);
         releaseLock(slot);
-        cleanupTemp();
+        try { cleanupTemp(); } catch (_) {}
         resolve(res);
       };
 
@@ -698,6 +645,7 @@ function runSingleEngine(engine, cfg, ctx) {
       });
 
       child.on('close', (status) => {
+        if (finished) return;
         const seconds = Math.round((Date.now() - startedAt) / 1000);
         if (stoppedKind === 'ceiling') {
           markCeiling(engine, stoppedReason);
@@ -710,35 +658,29 @@ function runSingleEngine(engine, cfg, ctx) {
         }
 
         let output = '';
+        let error = '';
         if (engine === 'codex') {
           try { output = fs.readFileSync(answerFile, 'utf8'); } catch (_) {}
-          if (!output.trim()) output = stdout;
-        } else if (engine === 'gemini') {
-          output = extractOutputText(gmCli, stdout);
         } else {
-          output = stdout;
+          ({ text: output, error } = readReviewResult(engine, stdout));
         }
 
-        const combined = stderr + '\n' + stdout + '\n' + output;
-        if ((status !== 0 && looksLikeQuotaError(combined)) || (status === 0 && !output.trim() && looksLikeQuotaError(combined))) {
-          const reason = 'quota or rate-limit error in ' + cmd.bin + ' output';
-          markCeiling(engine, reason);
-          finish({ outcome: 'ceiling', engine, seconds, reason });
-          return;
-        }
-
-        if ((status !== 0 && looksLikeAuthError(combined)) || (status === 0 && !output.trim() && looksLikeAuthError(combined))) {
-          finish({ outcome: 'logged-out', engine, seconds, reason: cmd.bin + ' authentication required' });
-          return;
+        const diagnostics = stderr + '\n' + error;
+        if (status !== 0 || !output.trim()) {
+          if (looksLikeQuotaError(diagnostics)) {
+            const reason = 'quota or rate-limit error from ' + cmd.bin;
+            markCeiling(engine, reason);
+            finish({ outcome: 'ceiling', engine, seconds, reason });
+            return;
+          }
+          if (looksLikeAuthError(diagnostics)) {
+            finish({ outcome: 'logged-out', engine, seconds, reason: cmd.bin + ' authentication required' });
+            return;
+          }
         }
 
         if (status !== 0) {
-          finish({
-            outcome: 'error',
-            engine,
-            seconds,
-            reason: cmd.bin + ' exited with code ' + status + ': ' + (stderr || stdout).trim().slice(-400),
-          });
+          finish({ outcome: 'error', engine, seconds, reason: cmd.bin + ' exited with code ' + status });
           return;
         }
 
@@ -757,22 +699,27 @@ function runSingleEngine(engine, cfg, ctx) {
       });
     })().catch((err) => {
       releaseLock(slot);
-      resolve({ outcome: 'error', engine, reason: String(err.message || err) });
+      try { cleanupTemp(); } catch (_) {}
+      const outcome = err.code === 'ENOENT' && !err.path ? 'missing' : 'error';
+      resolve({ outcome, engine, reason: outcome === 'missing' ? bin + ' not found' : String(err.message || err) });
     });
   });
 }
 
 function scanChangesForSecrets(dir, files, envSecrets) {
-  const diffR = git(dir, ['diff', 'HEAD', '--'].concat(files));
+  const diffR = git(dir, ['--literal-pathspecs', 'diff', 'HEAD', '--'].concat(files));
+  if (diffR.status !== 0) throw new Error('could not scan reviewer changes');
   if (hasSecretPattern(diffR.stdout, envSecrets)) return true;
   for (const f of files) {
     const abs = path.join(dir, f);
     try {
-      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      if (fs.lstatSync(abs).isFile()) {
         const content = fs.readFileSync(abs, 'utf8');
         if (hasSecretPattern(content, envSecrets)) return true;
       }
-    } catch (_) {}
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
   }
   return false;
 }
@@ -801,6 +748,10 @@ async function main(argv) {
   const cfg = loadConfig(dir);
   const chatId = flags.chat || process.env.ENGINE_SWITCH_CHAT || null;
   const chatKey = chatId ? readChatKey(chatId, undefined, cfg) : { reviewer: (cfg.defaults && cfg.defaults.reviewer) || 'codex' };
+  if (!chatKey) {
+    console.error('[review] invalid chat engine key');
+    return 1;
+  }
   const chain = buildEngineChain(
     chatKey.reviewer,
     (cfg.review && cfg.review.order) || ['codex', 'gemini', 'claude'],
@@ -817,6 +768,7 @@ async function main(argv) {
   let body = '';
   let baseRef = flags.base;
   let branch = '';
+  const originalHead = gitOut(dir, ['rev-parse', 'HEAD']);
   try {
     branch = gitOut(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   } catch (e) {
@@ -840,7 +792,7 @@ async function main(argv) {
       console.error('[review] invalid JSON from gh pr view');
       return 1;
     }
-    const localHead = gitOut(dir, ['rev-parse', 'HEAD']);
+    const localHead = originalHead;
     if (localHead !== pr.headRefOid) {
       console.error('[review] local HEAD (' + localHead.slice(0, 8) + ') does not match PR head (' + String(pr.headRefOid).slice(0, 8) + '); sync/push first');
       return 1;
@@ -848,7 +800,8 @@ async function main(argv) {
     title = pr.title || '';
     body = pr.body || '';
     if (!baseRef) {
-      baseRef = resolveDiffBase(dir, 'origin/' + (pr.baseRefName || 'main')) || pr.baseRefName || 'main';
+      baseRef = resolveDiffBase(dir, 'origin/' + (pr.baseRefName || 'main'));
+      if (!baseRef) throw new Error('PR base commit not available locally');
     }
   } else {
     const resolved = resolveDiffBase(dir, baseRef);
@@ -861,7 +814,12 @@ async function main(argv) {
   }
 
   const reviewRelPath = reviewFilePath({ pr: flags.pr, branch, base: baseRef });
-  const prePorcelain = git(dir, ['status', '--porcelain', '-z', '--untracked-files=all']).stdout;
+  const readStatus = () => {
+    const status = git(dir, ['status', '--porcelain', '-z', '--untracked-files=all']);
+    if (status.status !== 0) throw new Error('could not read worktree status');
+    return status.stdout;
+  };
+  const prePorcelain = readStatus();
   const preDirty = validateReviewerChanges(prePorcelain, reviewRelPath);
   if (!preDirty.ok || preDirty.files.length > 0) {
     console.error('[review] working tree has uncommitted changes before review; commit or stash first');
@@ -880,6 +838,11 @@ async function main(argv) {
     return 1;
   }
 
+  const envSecrets = collectEnvSecretValues(process.env);
+  if (hasSecretPattern(diffInfo.diff, envSecrets)) {
+    console.error('[review] sensitive file or secret pattern in the review diff');
+    return 1;
+  }
   const callers = findCallers(dir, diffInfo.diff);
   const prompt = buildPrompt({
     pr: flags.pr,
@@ -892,6 +855,10 @@ async function main(argv) {
     diff: diffInfo.diff,
   });
 
+  if (hasSecretPattern(prompt, envSecrets)) {
+    console.error('[review] secret pattern detected in review input');
+    return 1;
+  }
   const maxWaitMs = (flags.maxWait !== null ? flags.maxWait : 600) * 1000;
   const skipped = [];
 
@@ -907,42 +874,63 @@ async function main(argv) {
       maxWaitMs,
     });
 
+    if (gitOut(dir, ['rev-parse', 'HEAD']) !== originalHead || gitOut(dir, ['rev-parse', '--abbrev-ref', 'HEAD']) !== branch) {
+      console.error('[review] HEAD or branch changed during review; refusing to write a verdict');
+      return 1;
+    }
     if (res.outcome === 'ok') {
-      const postPorcelain = git(dir, ['status', '--porcelain', '-z', '--untracked-files=all']).stdout;
+      const postPorcelain = readStatus();
       const check = validateReviewerChanges(postPorcelain, reviewRelPath);
       if (!check.ok) {
         console.error('[review] ' + check.reason);
         return 1;
       }
 
+      if (hasSecretPattern(res.output, envSecrets)) {
+        console.error('[review] secret pattern detected in review verdict output; refusing to write');
+        return 1;
+      }
       if (check.files.length > 0) {
-        const envSecrets = collectEnvSecretValues(process.env);
         if (scanChangesForSecrets(dir, check.files, envSecrets)) {
           console.error('[review] secret pattern detected in reviewer edits; refusing to commit');
           return 1;
         }
-        const addFix = git(dir, ['add', '--'].concat(check.files));
+      }
+      if (check.files.length > 0 && !flags.noCommit) {
+        const addFix = git(dir, ['--literal-pathspecs', 'add', '--'].concat(check.files));
         if (addFix.status !== 0) {
           console.error('[review] git add failed for reviewer fixes: ' + addFix.stderr.trim());
           return 1;
         }
-        const commitFix = git(dir, ['commit', '-m', 'review: fixes by the reviewer', '--'].concat(check.files));
+        const commitFix = git(dir, ['--literal-pathspecs', 'commit', '-m', 'review: fixes by the reviewer', '--'].concat(check.files));
         if (commitFix.status !== 0) {
           console.error('[review] git commit failed for reviewer fixes: ' + (commitFix.stderr || commitFix.stdout).trim());
           return 1;
         }
       }
 
+      // An approval cannot be pinned to a commit that excludes the reviewer's fixes.
+      const uncommittedFixes = flags.noCommit && check.files.length > 0;
+      const verdict = uncommittedFixes ? 'BLOCK' : res.verdict;
       const reviewedHead = gitOut(dir, ['rev-parse', 'HEAD']);
-      const verdictText = formatReviewFile(res.verdict, reviewedHead, res.output);
-      if (hasSecretPattern(verdictText, collectEnvSecretValues(process.env))) {
-        console.error('[review] secret pattern detected in review verdict output; refusing to write');
-        return 1;
-      }
+      const body = uncommittedFixes ? 'Reviewer fixes remain uncommitted. Review the resulting commit before relying on approval.\n\n' + res.output : res.output;
+      const verdictText = formatReviewFile(verdict, reviewedHead, body);
 
       const absOut = path.join(dir, reviewRelPath);
-      fs.mkdirSync(path.dirname(absOut), { recursive: true });
-      fs.writeFileSync(absOut, verdictText, 'utf8');
+      const parent = path.dirname(absOut);
+      fs.mkdirSync(parent, { recursive: true });
+      if (!fs.lstatSync(parent).isDirectory() || fs.lstatSync(parent).isSymbolicLink()) {
+        throw new Error('verdict directory must not be a symbolic link');
+      }
+      // Write a new file and rename it instead of following a pre-existing symlink.
+      const outDir = fs.mkdtempSync(path.join(path.dirname(absOut), '.review-'));
+      try {
+        const tempOut = path.join(outDir, 'verdict');
+        fs.writeFileSync(tempOut, verdictText, 'utf8');
+        fs.renameSync(tempOut, absOut);
+      } finally {
+        fs.rmSync(outDir, { recursive: true, force: true });
+      }
 
       if (!flags.noCommit) {
         const addRev = git(dir, ['add', '--', reviewRelPath]);
@@ -967,20 +955,24 @@ async function main(argv) {
           engine: res.engine,
           pr: flags.pr || null,
           base: baseRef,
-          verdict: res.verdict,
+          verdict,
           reviewedHead,
           seconds: res.seconds,
           fixes: check.files,
         },
         undefined,
-        path.join(engineHome(), 'review-history.jsonl')
+        cfg.review.auditLog
       );
 
-      console.log('VERDICT: ' + res.verdict + ' | ENGINE: ' + res.engine + ' | HEAD: ' + reviewedHead + ' | FILE: ' + reviewRelPath);
+      console.log('VERDICT: ' + verdict + ' | ENGINE: ' + res.engine + ' | HEAD: ' + reviewedHead + ' | FILE: ' + reviewRelPath);
       return 0;
     }
 
     if (shouldFallbackReason(res.outcome)) {
+      if (readStatus() !== prePorcelain) {
+        console.error('[review] the failed reviewer left changes; refusing to transfer them to another engine');
+        return 1;
+      }
       console.error('[review] ' + engine + ' unavailable (' + res.outcome + ': ' + res.reason + '); trying next engine');
       skipped.push({ engine, outcome: res.outcome, reason: res.reason });
       continue;
@@ -1010,9 +1002,8 @@ module.exports = {
   reviewFilePath,
   extractSymbols,
   buildPrompt,
-  buildPermissionsObject,
   buildReviewCommand,
-  extractOutputText,
+  readReviewResult,
   parsePorcelain,
   validateReviewerChanges,
   collectEnvSecretValues,

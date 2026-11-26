@@ -15,7 +15,7 @@
     "ceilingValidMinutes": 30
   },
   "codex": {
-    "model": "gpt-6.2-sol",
+    "model": "<latest>",
     "effort": "medium",
     "maxConcurrent": 2,
     "sharedAccount": false,
@@ -23,14 +23,14 @@
   },
   "gemini": {
     "cli": "gemini",
-    "model": "gemini-4-hydrogen-high",
+    "model": "<latest>",
     "maxConcurrent": 1,
     "sharedAccount": false,
     "sharePct": 100
   },
   "guard": {
-    "allowAgents": ["web-fetch", "claude-code-guide", "statusline-setup"],
-    "toolExceptions": ["mcp", "browser", "chrome", "supabase", "database"],
+    "allowAgents": [],
+    "toolExceptions": [],
     "auditLog": "~/.engine-switch/claude-exceptions.jsonl"
   },
   "modelRouting": {

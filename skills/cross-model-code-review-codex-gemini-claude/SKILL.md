@@ -25,10 +25,10 @@ Use this skill when:
 
 ## First-run setup
 
-If `~/.engine-switch/config.json` does not exist (or the user says `"reconfigure"`), run the setup interview before running a review. Full questions, defaults, and schema are in `references/setup.md`.
+On first use or when the user asks to reconfigure, run the setup interview before running a review. Full questions, defaults, and schema are in `references/setup.md`.
 
 1. Run `node scripts/detect.cjs` (read-only). Show detected CLIs (`claude`, `codex`, `gemini`, `agy`, and optional `gh`), versions, and sign-in state in plain words for confirmation. Give official install/sign-in links for missing tools; never ask for keys or tokens.
-2. Ask Round 1 and Round 2 questions: available engines, default reviewer (`codex` recommended) and new-chat mode, ordered chain (recommend Codex `gpt-6.2-sol` medium first, Gemini `gemini-4-hydrogen-high` second, Claude Sonnet last), ceiling thresholds and mid-run watchdog, max concurrent reviews per engine (default `3`), shared-account share %, and guard-hook settings if used.
+2. Ask Round 1 and Round 2 questions: available engines, default reviewer (`codex` recommended) and new-chat mode, ordered chain (recommend Codex first, Gemini second, Claude Sonnet last), ceiling thresholds and mid-run watchdog, max concurrent reviews per engine (default `3`), shared-account share %, and guard-hook settings if used.
 3. Write `~/.engine-switch/config.json`, validate with `node scripts/config.cjs --validate ~/.engine-switch/config.json`, print a one-screen summary, and check the guard hook if Claude Code subagent enforcement is enabled.
 
 ## Per-chat reviewer switch

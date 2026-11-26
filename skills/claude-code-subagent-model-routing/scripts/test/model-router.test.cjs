@@ -59,6 +59,7 @@ test('general subagents without a valid JOB line are denied with clear explanati
     call('general-purpose', 'sonnet', 'JOB: judgment\n' + FIND),
     call('general-purpose', 'sonnet', FIND + '\nJOB: judgment -   \n'),
     call('general-purpose', 'opus', 'JOB: judgment\ndiagnose PR\n'),
+    call('general-purpose', 'sonnet', 'JOB: search and list\n' + FIND),
     call('general-purpose', 'sonnet', 'JOB: searcher\n' + FIND),
     { tool_name: 'Agent', tool_input: { subagent_type: 'general-purpose', prompt: 42 } },
     call('general-purpose', 'sonnet', FIND, 'Task'),
@@ -80,7 +81,6 @@ test('general subagents with JOB: search route to Haiku without injecting effort
     call('general-purpose', 'sonnet', FIND + '\n  job: Search'),
     call('general-purpose', undefined, SEARCH),
     call('claude', 'opus', SEARCH),
-    call(undefined, 'sonnet', 'JOB: search and list matching exports\n' + FIND),
   ]) {
     assert.deepStrictEqual(decide(c, DEFAULTS), {
       updatedInput: Object.assign({}, c.tool_input, { model: 'haiku' }),
@@ -94,8 +94,8 @@ test('general subagents with reading-verb judgment reasons are denied; genuine j
     'JOB: judgment - read all 20 log files',
     'JOB: judgment - reading full conversation logs',
     'JOB: judgment - find where the webhook drops requests',
-    'JOB: judgment (locate the rounding rule)',
-    'JOB: judgment: Inventory all guard checks',
+    'JOB: judgment - (locate the rounding rule)',
+    'JOB: judgment - Inventory all guard checks',
     'JOB: judgment - just list the routes in src',
     'JOB: judgment - need to count failing specs',
     'JOB: judgment - extract column names from SQL',
@@ -113,7 +113,7 @@ test('general subagents with reading-verb judgment reasons are denied; genuine j
     'JOB: judgment - readiness check on the deploy script',
     'JOB: judgment - review the reading of the CSV parser',
     'JOB: judgment - compare two versions of the module',
-    'JOB: judgment (write migration tests)',
+    'JOB: judgment - (write migration tests)',
   ];
   for (const p of realJudgments) {
     const c = call('general-purpose', 'sonnet', p + '\n' + FIND);
@@ -321,7 +321,7 @@ test('hook CLI end-to-end handles deny, allow+updatedInput, lean transcript chec
     assert.strictEqual(rewritten.status, 0);
     const rewrittenOut = JSON.parse(rewritten.stdout).hookSpecificOutput;
     assert.strictEqual(rewrittenOut.hookEventName, 'PreToolUse');
-    assert.strictEqual(rewrittenOut.permissionDecision, 'allow');
+    assert.strictEqual(rewrittenOut.permissionDecision, undefined);
     assert.strictEqual(rewrittenOut.updatedInput.model, 'haiku');
     assert.strictEqual(rewrittenOut.updatedInput.subagent_type, 'helper');
 
@@ -345,4 +345,13 @@ test('hook CLI end-to-end handles deny, allow+updatedInput, lean transcript chec
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('judgment without model defaults to Sonnet and policy applies despite explicit effort', () => {
+  const judgment = call(' Explore ', undefined, JUDGE, 'Agent', { effort: 'max' });
+  assert.deepEqual(decide(judgment, DEFAULTS).updatedInput, { ...judgment.tool_input, model: 'sonnet', effort: 'medium' });
+  const search = decide(call('general-purpose', 'haiku', SEARCH, 'Agent', { effort: 'max' }), DEFAULTS);
+  assert.equal(Object.hasOwn(search.updatedInput, 'effort'), false);
+  assert.equal(parseAttempt('ATTEMPT: 3 candidates'), 1);
+  assert.equal(parseAttempt('ATTEMPT: 3\r\n'), 3);
 });

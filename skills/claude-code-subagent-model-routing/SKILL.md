@@ -73,7 +73,7 @@ If `effort` is already set explicitly on `tool_input`, the hook leaves it alone.
 If you also use `codex-gemini-subagents-for-claude-code`:
 
 1. Register `engine-guard.cjs` **before** `model-router.cjs` in `PreToolUse`.
-2. When a chat is set to `codex` or `gemini`, `engine-guard.cjs` runs first and blocks Claude subagents unless `CLAUDE-ONLY: ceiling` or `CLAUDE-ONLY: tool <name>` is present (or the agent is allow-listed).
+2. When a chat is set to `codex` or `gemini`, `engine-guard.cjs` checks for an authorized ceiling or tool declaration. Its denial takes precedence over the router update.
 3. `model-router.cjs` only shapes the Claude subagents that `engine-guard.cjs` allows through (for example when the chat runs on `claude`, or on an allowed `CLAUDE-ONLY:` exception).
 
 See `references/rules.md` for full edge-case rules and `references/setup.md` for configuration and `settings.json` examples.

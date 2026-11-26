@@ -56,10 +56,11 @@ test('checkQuota respects percent-or-error, error-only, and sharedAccount shareP
   assert.match(ceil.checkQuota({ windowPct: 40, weekPct: 10 }, sw, { sharedAccount: true, sharePct: 40 }), /ceiling 40%/);
 });
 
-test('looksLikeQuotaError matches rate limit, quota, 429, usage limit', () => {
-  assert.strictEqual(ceil.looksLikeQuotaError('Error 429 Too Many Requests'), true);
-  assert.strictEqual(ceil.looksLikeQuotaError('Rate-limit reached'), true);
-  assert.strictEqual(ceil.looksLikeQuotaError('API quota exceeded'), true);
-  assert.strictEqual(ceil.looksLikeQuotaError('Usage limit reached'), true);
-  assert.strictEqual(ceil.looksLikeQuotaError('All tests passed'), false);
+test('quota detector requires provider error language', () => {
+  for (const message of ['HTTP 429', 'rate limit exceeded', 'Quota exceeded', 'usage limit reached', 'RESOURCE_EXHAUSTED']) {
+    assert.equal(ceil.looksLikeQuotaError(message), true);
+  }
+  for (const message of ['line 429', 'quota configuration', 'about the usage limit', 'rate limit settings']) {
+    assert.equal(ceil.looksLikeQuotaError(message), false);
+  }
 });
