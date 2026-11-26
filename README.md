@@ -59,6 +59,34 @@ flowchart LR
 
 *Guard and fallback replay: a chat set to Codex blocks a Claude subagent, hits the Codex quota ceiling, then falls back with a verified marker and audit entry.*
 
+```mermaid
+flowchart TD
+    subgraph helpers["Helpers and model routing"]
+        H["Chat asks<br/>for helper"] --> HK{"Per-chat<br/>helper key"}
+        HK -- "codex / gemini" --> HR["Runner in<br/>own worktree"]
+        HR -- "done" --> HD["Done"]
+        HR -- "quota ceiling<br/>exit 3 + marker" --> HF["Next engine<br/>in fallback"]
+        HF -- "external" --> HR
+        HF -- "CLAUDE-ONLY: ceiling" --> HG{"Guard hook"}
+        HK -- "Claude attempt<br/>on codex/gemini" --> HG
+        HG -- "CLAUDE-ONLY: ceiling<br/>or tool" --> HA["Audit log"]
+        HG -- "anything else" --> HX["Denied by guard"]
+        HK -- "claude" --> MR["Model router"]
+        HA --> MR
+        MR -- "JOB: search" --> MS["Haiku"]
+        MR -- "JOB: judgment" --> MJ["Sonnet"]
+        MR -- "ATTEMPT: 3" --> MO["Opus"]
+        MR -- "ATTEMPT: 4+" --> M4["Stop + report"]
+    end
+    subgraph review["Cross-model review"]
+        R["PR or diff"] --> RK["Per-chat<br/>reviewer key"]
+        RK --> RE["Reviewer engine"]
+        RE -- "missing, logged out,<br/>or ceiling" --> RF["Next engine<br/>never on slowness"]
+        RF --> RE
+        RE -- "done" --> RV["Verdict file<br/>valid for 1 head commit"]
+    end
+```
+
 ### How they fit together
 
 - [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) takes each chat from an isolated worktree through tests, PR, merge gate, deploy, and cleanup.
