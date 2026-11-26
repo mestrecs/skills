@@ -66,7 +66,7 @@ test('loopholes denied: arbitrary text after CLAUDE-ONLY:, trailing text on ceil
     'CLAUDE-ONLY: Codex is at 90% ceiling',
     'CLAUDE-ONLY: ceiling because I checked manually',
     'CLAUDE-ONLY: ceiling extra-text',
-    'CLAUDE-ONLY: needs the supabase mcp server',
+    'CLAUDE-ONLY: needs the my-db connector',
     'CLAUDE-ONLY: open chrome browser',
     'CLAUDE-ONLY: tool bash',
     'CLAUDE-ONLY: tool browser notes',
