@@ -1,9 +1,10 @@
 'use strict';
-// Claude Code PreToolUse guard hook (matcher: Agent|Task|Workflow).
+// Claude Code PreToolUse guard hook (matcher: Agent|Task|Workflow|Bash).
 // Enforces the per-chat helper engine key (~/.engine-switch/chats/<session>.json):
 // - claude -> allow all
 // - codex / gemini -> block Claude subagents (empty type, general-purpose, Explore, Plan, fork,
-//   any named agent not in guard.allowAgents, and Workflow) unless one of the two valid exceptions is present:
+//   any named agent not in guard.allowAgents, Workflow, and Bash commands running `claude -p` / `claude --print`)
+//   unless one of the two valid exceptions is present:
 //   1) CLAUDE-ONLY: ceiling  (requires recent ceiling marker for the engine and any codex fallback)
 //   2) CLAUDE-ONLY: tool <name>  (where <name> matches configured guard.toolExceptions)
 // Every allowed exception is logged to ~/.engine-switch/claude-exceptions.jsonl.
@@ -13,9 +14,15 @@ const { DEFAULTS, loadConfig } = require('../config.cjs');
 const { recentCeiling, appendAuditLog } = require('../ceiling.cjs');
 const { readChatKey } = require('../engine-switch.cjs');
 
-const HANDLED_TOOLS = new Set(['Agent', 'Task', 'Workflow']);
+const HANDLED_TOOLS = new Set(['Agent', 'Task', 'Workflow', 'Bash']);
+const BASH_CLAUDE_PRINT_RE = /(?:^|[;&|(])\s*(?:\S*=\S*\s+)*(?:npx\s+)?(?:\S*[\\/])?claude(?:\.exe|\.cmd)?\s+(?:[^\n;&|]*\s)?(?:-p|--print)\b/m;
 const DEFAULT_ALLOW_AGENTS = DEFAULTS.guard.allowAgents.slice();
 const DEFAULT_TOOL_EXCEPTIONS = DEFAULTS.guard.toolExceptions.slice();
+
+function isBashClaudePrint(toolInput) {
+  const cmd = toolInput && typeof toolInput.command === 'string' ? toolInput.command : '';
+  return Boolean(cmd && BASH_CLAUDE_PRINT_RE.test(cmd));
+}
 
 function extractStrings(val, out) {
   const list = out || [];
@@ -91,18 +98,23 @@ function recordAudit(writeAudit, entry, cfg) {
 function decide(input, readKey, readCeiling, config, writeAudit) {
   if (!input || !HANDLED_TOOLS.has(input.tool_name)) return null;
 
+  const isWorkflow = input.tool_name === 'Workflow';
+  const isBash = input.tool_name === 'Bash';
+  const ti = input.tool_input || {};
+  if (isBash && !isBashClaudePrint(ti)) return null;
+
+  const subagentType = isWorkflow
+    ? 'Workflow'
+    : (isBash ? 'Bash' : String(ti.subagent_type || '').trim().toLowerCase());
+
   const cfg = config || DEFAULTS;
   const guardCfg = cfg.guard || {};
-  const isWorkflow = input.tool_name === 'Workflow';
-  const ti = input.tool_input || {};
-  const subagentType = isWorkflow ? 'Workflow' : String(ti.subagent_type || '').trim().toLowerCase();
-
   const allowList = new Set(
     (Array.isArray(guardCfg.allowAgents) ? guardCfg.allowAgents : DEFAULT_ALLOW_AGENTS)
       .map((s) => String(s).trim().toLowerCase())
       .filter(Boolean)
   );
-  if (!isWorkflow && allowList.has(subagentType)) return null;
+  if (!isWorkflow && !isBash && allowList.has(subagentType)) return null;
 
   const key = typeof readKey === 'function' ? readKey(input.session_id) : readChatKey(input.session_id, undefined, cfg);
   const engine = key && String(key.helper || '').trim().toLowerCase();
@@ -201,7 +213,7 @@ function decide(input, readKey, readCeiling, config, writeAudit) {
 
   const target = isWorkflow
     ? 'the Workflow tool'
-    : 'agent "' + (subagentType || '(general-purpose)') + '"';
+    : (isBash ? 'a `claude -p` / `claude --print` Bash command' : 'agent "' + (subagentType || '(general-purpose)') + '"');
   const extra = invalidLine !== null
     ? ' The line "CLAUDE-ONLY: ' + invalidLine + '" is not a valid exception.'
     : '';
@@ -223,6 +235,8 @@ if (require.main === module) {
   process.stdin.on('end', () => {
     try {
       const input = JSON.parse(raw || '{}');
+      if (!input || !HANDLED_TOOLS.has(input.tool_name)) process.exit(0);
+      if (input.tool_name === 'Bash' && !isBashClaudePrint(input.tool_input)) process.exit(0);
       const cwd = input.cwd || process.cwd();
       const cfg = loadConfig(cwd);
       const reason = decide(
@@ -249,8 +263,10 @@ if (require.main === module) {
 
 module.exports = {
   HANDLED_TOOLS,
+  BASH_CLAUDE_PRINT_RE,
   DEFAULT_ALLOW_AGENTS,
   DEFAULT_TOOL_EXCEPTIONS,
+  isBashClaudePrint,
   extractStrings,
   buildToolRegex,
   findExceptions,

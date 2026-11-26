@@ -74,7 +74,7 @@ Always show the default value that will be used if the user skips a question, an
    node scripts/config.cjs --validate ~/.engine-switch/config.json
    ```
 2. Show a one-screen summary of enabled engines, default reviewer, fallback chain, quota thresholds, and max concurrent reviews.
-3. If the user also uses the `PreToolUse` guard hook in Claude Code (`codex-gemini-subagents-for-claude-code`), print the `settings.json` snippet (`matcher: "Agent|Task|Workflow"`, command `node <subagents-skill-dir>/scripts/hooks/engine-guard.cjs`) and verify it exits `0` on sample JSON stdin.
+3. If the user also uses the `PreToolUse` guard hook in Claude Code (`codex-gemini-subagents-for-claude-code`), print the `settings.json` snippet (`matcher: "Agent|Task|Workflow|Bash"`, command `node <subagents-skill-dir>/scripts/hooks/engine-guard.cjs`) and verify it exits `0` on sample JSON stdin.
 
 ## Config schema (`~/.engine-switch/config.json`)
 

@@ -18,7 +18,7 @@ Run helper (subagent) tasks from Claude Code on Codex CLI, Gemini CLI, or Antigr
 Use this skill when:
 - You want subagents in a Claude Code session to run on Codex or Gemini instead of Claude.
 - You say `"use codex helpers"`, `"use gemini helpers"`, `"use claude helpers"`, or `"reconfigure"`.
-- You want a hard guard hook preventing accidental Claude subagent, `fork`, named agent, or `Workflow` launches, with an audit trail for exceptions.
+- You want a hard guard hook preventing accidental Claude subagent, `fork`, named agent, `Workflow`, or `Bash` `claude -p` launches, with an audit trail for exceptions.
 
 `scripts/` below refers to this skill's directory (for example `~/.claude/skills/codex-gemini-subagents-for-claude-code/scripts/`). Always invoke scripts with `node <skill-dir>/scripts/<name>.cjs`.
 
@@ -28,7 +28,7 @@ If `~/.engine-switch/config.json` does not exist (or the user says `"reconfigure
 
 1. Run `node scripts/detect.cjs` (read-only). Show the detected CLIs (`claude`, `codex`, `gemini`, `agy`), versions, and login state in plain words for the user to confirm or correct. Give official install/sign-in instructions for any missing tool; never ask for keys or tokens.
 2. Ask Round 1 and Round 2 questions (engines, default per role, opt-in vs all-chats default, fallback chain, quota ceilings and watchdog behavior, ceiling marker validity, models/effort, concurrency, shared-account share %, allowed pass-through agents, tool exceptions, audit log path).
-3. Write `~/.engine-switch/config.json` (verified against `scripts/config.cjs`), show a one-screen summary, print the `settings.json` hook snippet (`matcher: "Agent|Task|Workflow"`), and verify `scripts/hooks/engine-guard.cjs` runs cleanly against a sample input.
+3. Write `~/.engine-switch/config.json` (verified against `scripts/config.cjs`), show a one-screen summary, print the `settings.json` hook snippet (`matcher: "Agent|Task|Workflow|Bash"`), and verify `scripts/hooks/engine-guard.cjs` runs cleanly against a sample input.
 
 ## Per-chat engine switch
 
@@ -95,4 +95,4 @@ When that happens, the runner writes `~/.engine-switch/ceilings/<engine>.json` (
 1. `CLAUDE-ONLY: ceiling` — exact line, valid only when the required recent ceiling marker(s) exist on disk.
 2. `CLAUDE-ONLY: tool <name>` — where `<name>` matches a configured exclusive Claude tool (`mcp|browser|chrome|supabase|database` by default).
 
-Allowed exceptions are appended to `~/.engine-switch/claude-exceptions.jsonl`. Any other `Agent`, `Task`, `fork`, named agent not in `guard.allowAgents`, or `Workflow` call is denied by the hook. See `references/guard-hook.md` and `references/engines.md` for details.
+Allowed exceptions are appended to `~/.engine-switch/claude-exceptions.jsonl`. Any other `Agent`, `Task`, `fork`, named agent not in `guard.allowAgents`, `Workflow`, or `Bash` `claude -p` / `claude --print` call is denied by the hook. See `references/guard-hook.md` and `references/engines.md` for details.

@@ -125,6 +125,10 @@ On first use the skill finds no `.parallel-pr.json`, inspects your setup, asks a
 | [`cross-model-code-review-codex-gemini-claude`](skills/cross-model-code-review-codex-gemini-claude/SKILL.md) | You want PRs or branch diffs reviewed by a different model (Codex, Gemini/agy, or fresh Claude) per chat without wasting quota or falling back on slowness | Per-chat reviewer selection, strict fallback only on missing/logged-out/quota ceiling, per-engine concurrency slots (default 3), safe fix commits, and `reviews/REVIEW-PR<n>.md` verdicts valid for one head commit. |
 | [`claude-code-subagent-model-routing`](skills/claude-code-subagent-model-routing/SKILL.md) | Your Claude Code subagents run on Claude and you want hook-enforced Haiku/Sonnet/Opus cost routing instead of rules the chat forgets | `PreToolUse` hook (`Agent|Task`) enforcing `JOB: search` (Haiku) vs `JOB: judgment` (asked model, medium effort), reading-verb guard, `ATTEMPT: 2/3/4+` escalation & stop rule, named-agent effort defaults, and optional `helper` lean agent. |
 
+### How they fit together
+
+Each skill works on its own or together as a single pipeline: [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) delivers changes safely from isolated worktrees through tests, PRs, merge gating, deploy, and cleanup; [`codex-gemini-subagents-for-claude-code`](skills/codex-gemini-subagents-for-claude-code/SKILL.md) decides per chat which engine runs helper tasks (Codex, Gemini/agy, or Claude); [`cross-model-code-review-codex-gemini-claude`](skills/cross-model-code-review-codex-gemini-claude/SKILL.md) decides per chat which engine reviews the diff with strict quota-ceiling fallback; and [`claude-code-subagent-model-routing`](skills/claude-code-subagent-model-routing/SKILL.md) picks the Claude model and effort whenever a subagent runs on Claude.
+
 ## Why this exists
 
 - **Two chats, one folder.** One switched branches while the other was mid-edit and committed its half-written files onto the wrong branch. Now every chat has its own worktree and nobody touches the shared checkout.

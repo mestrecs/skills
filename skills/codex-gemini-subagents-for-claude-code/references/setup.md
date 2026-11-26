@@ -70,7 +70,7 @@ Always show the default value that will be used if the user skips a question, an
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Task|Workflow",
+        "matcher": "Agent|Task|Workflow|Bash",
         "hooks": [
           {
             "type": "command",

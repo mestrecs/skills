@@ -171,7 +171,70 @@ test('audit failure never blocks and hook CLI handles deny, audit log, and malfo
     const broken = cp.spawnSync(process.execPath, [HOOK_SCRIPT], { env, input: '{not-json', encoding: 'utf8' });
     assert.strictEqual(broken.status, 0);
     assert.strictEqual(broken.stdout, '');
+
+    // Bash fast-path: normal command exits 0 silently
+    const bashOk = cp.spawnSync(process.execPath, [HOOK_SCRIPT], {
+      env,
+      input: JSON.stringify({ session_id: SID, tool_name: 'Bash', tool_input: { command: 'git log -p' } }),
+      encoding: 'utf8',
+    });
+    assert.strictEqual(bashOk.status, 0);
+    assert.strictEqual(bashOk.stdout, '');
+
+    // Bash claude -p denied on codex chat
+    const bashDenied = cp.spawnSync(process.execPath, [HOOK_SCRIPT], {
+      env,
+      input: JSON.stringify({ session_id: SID, tool_name: 'Bash', tool_input: { command: 'claude -p "x"' } }),
+      encoding: 'utf8',
+    });
+    assert.strictEqual(bashDenied.status, 0);
+    assert.strictEqual(JSON.parse(bashDenied.stdout).hookSpecificOutput.permissionDecision, 'deny');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('Bash: claude -p / --print at command position is denied on codex/gemini; non-print commands pass fast before reading files', () => {
+  const bashCall = (command) => ({
+    session_id: SID,
+    tool_name: 'Bash',
+    tool_input: { command },
+  });
+
+  const deniedCommands = [
+    'claude -p "x"',
+    'cd a && claude --model sonnet -p x',
+    'npx claude --print x',
+    'FOO=1 claude -p x',
+    '/usr/bin/claude -p x',
+    String.raw`C:\bin\claude.exe -p x`,
+  ];
+  for (const cmd of deniedCommands) {
+    const denyCodex = decide(bashCall(cmd), keyOf('codex'), noCeiling, DEFAULTS, noopAudit);
+    assert.ok(denyCodex, `codex must deny Bash: ${cmd}`);
+    assert.match(denyCodex, /CODEX/);
+    assert.ok(decide(bashCall(cmd), keyOf('gemini'), noCeiling, DEFAULTS, noopAudit), `gemini must deny Bash: ${cmd}`);
+    assert.strictEqual(decide(bashCall(cmd), keyOf('claude'), noCeiling, DEFAULTS, noopAudit), null, `claude must allow Bash: ${cmd}`);
+  }
+
+  // Non-print Bash commands must return null without calling readKey or readCeiling
+  const failRead = () => { throw new Error('fast path must not read files'); };
+  for (const cmd of ['git log -p', 'echo claude', 'grep -n "claude -p" file.js', 'claude --version', '']) {
+    assert.strictEqual(decide(bashCall(cmd), failRead, failRead, DEFAULTS, failRead), null, `must pass fast: ${cmd}`);
+  }
+
+  // Even if "bash" is in allowAgents, Bash claude -p is still blocked
+  const badCfg = Object.assign({}, DEFAULTS, {
+    guard: Object.assign({}, DEFAULTS.guard, { allowAgents: ['bash', 'web-fetch'] }),
+  });
+  assert.ok(decide(bashCall('claude -p "x"'), keyOf('codex'), noCeiling, badCfg, noopAudit));
+
+  // Shell comment # CLAUDE-ONLY: ceiling works when marker exists
+  const withComment = 'claude -p "x"\n# CLAUDE-ONLY: ceiling';
+  assert.ok(decide(bashCall(withComment), keyOf('codex'), noCeiling, DEFAULTS, noopAudit));
+  const audits = [];
+  assert.strictEqual(decide(bashCall(withComment), keyOf('codex'), ceilingsOf('codex'), DEFAULTS, (e) => audits.push(e)), null);
+  assert.strictEqual(audits.length, 1);
+  assert.strictEqual(audits[0].tool, 'Bash');
+  assert.strictEqual(audits[0].exception, 'ceiling');
 });

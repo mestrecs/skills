@@ -102,7 +102,7 @@ Composed with `codex-gemini-subagents-for-claude-code` (`engine-guard.cjs` runs 
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent|Task|Workflow",
+        "matcher": "Agent|Task|Workflow|Bash",
         "hooks": [
           {
             "type": "command",
