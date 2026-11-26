@@ -1,0 +1,17 @@
+{
+  "skill": "claude-code-subagent-model-routing",
+  "should_trigger": [
+    { "prompt": "Route Claude Code subagents to Haiku for search and Sonnet at medium effort for judgment, enforced by a PreToolUse hook.", "reason": "Asks for hook-enforced Haiku/Sonnet model and effort routing on Claude Code subagents." },
+    { "prompt": "Stop allowing Opus on the first subagent attempt and fail after 3 retries.", "reason": "Requests ATTEMPT: 3 Opus gating and the 3-attempt stop rule." },
+    { "prompt": "Why did the PreToolUse hook deny my general-purpose agent for saying JOB: judgment - read 20 files?", "reason": "Directly asks about the reading-verb rejection rule in model-router.cjs." },
+    { "prompt": "Enable the lean helper agent so general-purpose subagents start with fewer tokens unless TOOLS: all is specified.", "reason": "Requests configuring the optional agents/helper.md swap and TOOLS: all escape hatch." },
+    { "prompt": "Configure model routing alongside codex-gemini-subagents-for-claude-code so allowed Claude helpers get shaped automatically.", "reason": "Asks to compose model-router.cjs after engine-guard.cjs." }
+  ],
+  "should_not_trigger": [
+    { "prompt": "Send subagent tasks to Codex CLI instead of Claude for this chat.", "reason": "Cross-engine delegation belongs to codex-gemini-subagents-for-claude-code, not Claude model routing." },
+    { "prompt": "Review PR #42 with Codex or Gemini and write reviews/REVIEW-PR42.md.", "reason": "Cross-model PR review belongs to cross-model-code-review-codex-gemini-claude." },
+    { "prompt": "Set up parallel git worktrees, test queue, and PR merge gate for my repo.", "reason": "Worktree-to-merge pipeline belongs to parallel-worktree-pr-merge-end-to-end." },
+    { "prompt": "Refactor the billing calculation in src/billing.ts to avoid floating-point rounding bugs.", "reason": "Plain coding task unrelated to Claude Code subagent model routing or hooks." },
+    { "prompt": "Explain the difference between HTTP 401 and HTTP 403.", "reason": "General web question unrelated to Claude Code subagents or hooks." }
+  ]
+}

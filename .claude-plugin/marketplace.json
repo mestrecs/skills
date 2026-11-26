@@ -27,6 +27,13 @@
       "source": "./",
       "strict": false,
       "skills": ["./skills/cross-model-code-review-codex-gemini-claude"]
+    },
+    {
+      "name": "claude-code-subagent-model-routing",
+      "description": "Route Claude Code subagents to the cheapest fitting model and effort via a PreToolUse hook: Haiku for search and Explore, Sonnet medium for judgment, reading-verb rejection, ATTEMPT 2/3/4+ escalation, named-agent model preservation, and optional lean helper swap.",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/claude-code-subagent-model-routing"]
     }
   ]
 }
