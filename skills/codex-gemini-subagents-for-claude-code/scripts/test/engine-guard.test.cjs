@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const config = require('../config.cjs');
-const DEFAULTS = { ...config.DEFAULTS, guard: { ...config.DEFAULTS.guard, toolExceptions: ['mcp', 'browser', 'chrome', 'supabase', 'database'] } };
+const DEFAULTS = { ...config.DEFAULTS, guard: { ...config.DEFAULTS.guard, toolExceptions: ['my-db', 'browser', 'claude.ai Docs'] } };
 const { markCeiling, recentCeiling, CEILING_VALID_MS, ceilingFilePath } = require('../ceiling.cjs');
 const { decide } = require('../hooks/engine-guard.cjs');
 
@@ -124,15 +124,24 @@ test('key gemini: CLAUDE-ONLY: ceiling requires gemini AND codex markers when fa
   assert.strictEqual(decide(agentCall('general-purpose', 'CLAUDE-ONLY: ceiling'), keyOf('gemini'), ceilingsOf('gemini'), directClaudeCfg, noopAudit), null);
 });
 
-test('CLAUDE-ONLY: tool <name> allows configured tools and logs exception', () => {
+test('CLAUDE-ONLY: tool <name> allows configured tools, logs exception, and lists allowed names on denial', () => {
   const entries = [];
   const capture = (e) => entries.push(e);
-  for (const name of ['mcp', 'browser', 'chrome', 'supabase', 'database']) {
+  for (const name of ['my-db', 'browser', 'claude.ai Docs']) {
     assert.strictEqual(decide(agentCall('general-purpose', `Run query\nCLAUDE-ONLY: tool ${name}`), keyOf('gemini'), noCeiling, DEFAULTS, capture), null);
   }
-  assert.strictEqual(entries.length, 5);
+  assert.strictEqual(entries.length, 3);
   assert.strictEqual(entries[0].exception, 'tool');
   assert.strictEqual(entries[0].engine, 'gemini');
+
+  const denyWithList = decide(agentCall('general-purpose', 'CLAUDE-ONLY: tool unknown-tool'), keyOf('codex'), noCeiling, DEFAULTS, noopAudit);
+  assert.match(denyWithList, /my-db, browser, claude\.ai Docs/);
+  assert.match(denyWithList, /reconfigure/);
+
+  const emptyToolsCfg = { ...config.DEFAULTS, guard: { ...config.DEFAULTS.guard, toolExceptions: [] } };
+  const denyEmpty = decide(agentCall('general-purpose', 'CLAUDE-ONLY: tool my-db'), keyOf('codex'), noCeiling, emptyToolsCfg, noopAudit);
+  assert.match(denyEmpty, /no Claude-only tool exceptions are configured/);
+  assert.match(denyEmpty, /reconfigure/);
 });
 
 test('expired ceiling marker (> 30 min) is rejected; fresh marker passes and writes audit JSONL', () => {
@@ -160,7 +169,7 @@ test('expired ceiling marker (> 30 min) is rejected; fresh marker passes and wri
 
 test('unauditable exceptions are denied; hook output and malformed input follow PreToolUse', () => {
   assert.match(
-    decide(agentCall('general-purpose', 'CLAUDE-ONLY: tool mcp'), keyOf('codex'), noCeiling, DEFAULTS, () => { throw new Error('disk full'); }),
+    decide(agentCall('general-purpose', 'CLAUDE-ONLY: tool my-db'), keyOf('codex'), noCeiling, DEFAULTS, () => { throw new Error('disk full'); }),
     /could not be audited/
   );
 

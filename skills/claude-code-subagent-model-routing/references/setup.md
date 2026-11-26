@@ -50,7 +50,7 @@ Always show the default value that will be used if the user skips a question, an
    - `switchOn.stopMidRun`: `true` (Recommended) or `false`.
    - `switchOn.ceilingValidMinutes`: `30` (Recommended) or positive integer.
    - `guard.allowAgents`: default `[]`.
-   - `guard.toolExceptions`: default `[]`.
+   - `guard.toolExceptions`: default `[]` — a connector that exists only in Claude Code on this machine, found by setup (e.g., `my-db`, `browser`).
    - `guard.auditLog`: default `"~/.engine-switch/claude-exceptions.jsonl"`.
 
 ## Round 2 (per-engine details, only if `codex` or `gemini` are enabled)
@@ -160,7 +160,7 @@ echo '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","mode
 | `gemini.sharedAccount` | Boolean | `false` |
 | `gemini.sharePct` | Number `1..100` | `100` |
 | `guard.allowAgents` | Array of lowercase agent names | `[]` |
-| `guard.toolExceptions` | Array of exact tool names | `[]` |
+| `guard.toolExceptions` | Array of Claude-only connector names (found by setup) | `[]` |
 | `guard.auditLog` | Path to JSONL audit log | `"~/.engine-switch/claude-exceptions.jsonl"` |
 | `modelRouting.searchModel` | Agent model alias | `"haiku"` |
 | `modelRouting.defaultEffort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |

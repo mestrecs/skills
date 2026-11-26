@@ -45,8 +45,18 @@ function findException(text, comment) {
   if (declarations.length !== 1) return null;
   const body = declarations[0][1];
   if (/^ceiling$/i.test(body)) return { kind: 'ceiling', detail: 'ceiling' };
-  const tool = /^tool[ \t]+([a-z0-9_.:-]+)$/i.exec(body);
+  const tool = /^tool[ \t]+([a-z0-9_.: -]+?)[ \t]*$/i.exec(body);
   return tool ? { kind: 'tool', detail: tool[1].toLowerCase() } : null;
+}
+
+function formatAllowedToolsHint(guard) {
+  const list = Array.isArray(guard.toolExceptions)
+    ? guard.toolExceptions.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean)
+    : [];
+  if (list.length > 0) {
+    return 'the named Claude-only tool is not allow-listed (allowed tools: ' + list.join(', ') + '; run "reconfigure" if a connector was added).';
+  }
+  return 'the named Claude-only tool is not allow-listed (no Claude-only tool exceptions are configured; run "reconfigure" if a connector was added).';
 }
 
 function decide(input, readKey, readCeiling, config, writeAudit) {
@@ -84,7 +94,7 @@ function decide(input, readKey, readCeiling, config, writeAudit) {
   let permitted = false;
   if (decl?.kind === 'tool') {
     permitted = allowedNamedAgent || allowed(guard.toolExceptions, decl.detail);
-    if (!permitted) denial = 'the named Claude-only tool is not allow-listed.';
+    if (!permitted) denial = formatAllowedToolsHint(guard);
   }
   if (decl?.kind === 'ceiling') {
     const enabled = cfg.engines || DEFAULTS.engines;

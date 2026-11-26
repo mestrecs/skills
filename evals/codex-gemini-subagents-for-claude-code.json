@@ -5,7 +5,7 @@
     { "prompt": "Use gemini helpers in this Claude Code session and block accidental Claude subagents with a hook.", "reason": "Requests per-chat Gemini helper routing and the PreToolUse guard hook." },
     { "prompt": "Configure Codex CLI and Antigravity CLI as subagent helpers with automatic fallback to Claude only when quota ceilings are hit.", "reason": "Describes the core quota-ceiling fallback and helper runner setup." },
     { "prompt": "Why did my Claude Code hook block the Explore agent when I asked for helper work?", "reason": "Directly references the guard hook blocking Explore under a non-Claude chat key." },
-    { "prompt": "Run this subagent task through Claude because it needs the Supabase MCP server.", "reason": "Requests the CLAUDE-ONLY: tool exception path for an exclusive Claude tool." }
+    { "prompt": "Run this subagent task through Claude because it needs the my-db connector.", "reason": "Requests the CLAUDE-ONLY: tool exception path for a Claude-only connector." }
   ],
   "should_not_trigger": [
     { "prompt": "Explain how JavaScript Promises work compared to async/await.", "reason": "General programming question unrelated to subagent routing or engine switching." },

@@ -156,7 +156,7 @@ function validateConfig(cfg) {
 
   const g = cfg.guard || {};
   if (!isStringArray(g.allowAgents) || g.allowAgents.some((name) => !/^[a-z0-9_.:-]+$/i.test(name.trim()))) errors.push('guard.allowAgents must be a list of non-empty agent names');
-  if (!isStringArray(g.toolExceptions) || g.toolExceptions.some((name) => !/^[a-z0-9_.:-]+$/i.test(name.trim()))) errors.push('guard.toolExceptions must be a list of exact tool names');
+  if (!isStringArray(g.toolExceptions) || g.toolExceptions.some((name) => !/^[a-z0-9_.: -]+$/i.test(name.trim()))) errors.push('guard.toolExceptions must be a list of exact tool names');
   if (typeof g.auditLog !== 'string' || !g.auditLog.trim()) errors.push('guard.auditLog must be a non-empty path');
 
   const mr = cfg.modelRouting || {};

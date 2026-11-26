@@ -63,11 +63,11 @@ Smaller models occasionally miss secondary callers or stop after the first match
 ## 7. Composing with `codex-gemini-subagents-for-claude-code`
 
 When both hooks are installed in `PreToolUse`:
-1. `engine-guard.cjs` runs **first** (`matcher: "Agent|Task|Workflow|Bash"`). If the chat key is `codex` or `gemini`, it blocks Claude subagents (including `claude -p` / `claude --print` in `Bash`) unless `CLAUDE-ONLY: ceiling` or `CLAUDE-ONLY: tool <name>` is in the prompt (or `subagent_type` is allow-listed).
+1. `engine-guard.cjs` runs **first** (`matcher: "Agent|Task|Workflow|Bash"`). If the chat key is `codex` or `gemini`, it blocks Claude subagents (including `claude -p` / `claude --print` in `Bash`) unless `CLAUDE-ONLY: ceiling` or `CLAUDE-ONLY: tool <name>` (a connector that exists only in Claude Code on this machine, found by setup) is in the prompt (or `subagent_type` is allow-listed).
 2. `model-router.cjs` runs **second** (`matcher: "Agent|Task"`). It never sees blocked calls and only shapes the Claude helpers that are allowed through.
 3. Combine directives freely in one prompt, for example:
    ```text
-   JOB: judgment - inspect Stripe webhook signature failure via MCP logs
-   CLAUDE-ONLY: tool mcp
+   JOB: judgment - inspect query failure using the Claude-only my-db connector
+   CLAUDE-ONLY: tool my-db
    TOOLS: all
    ```

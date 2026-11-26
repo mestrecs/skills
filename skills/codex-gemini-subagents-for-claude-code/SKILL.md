@@ -1,6 +1,6 @@
 ---
 name: codex-gemini-subagents-for-claude-code
-description: Routes Claude Code subagent work to Codex CLI, Gemini CLI, or Antigravity CLI per chat instead of spending Claude quota, enforced by a PreToolUse guard hook that blocks unintended Claude subagents. Claude subagents run only when the active engine (and configured fallback) has a verified quota-ceiling marker or when a task requires a Claude-only tool such as an MCP server or browser. Use when the user wants to use Codex or Gemini for Claude Code helpers or subagents, switch helper engines per chat, save Claude quota, enforce subagent routing with a hook, or configure automatic fallback at quota limits.
+description: Routes Claude Code subagent work to Codex CLI, Gemini CLI, or Antigravity CLI per chat instead of spending Claude quota, enforced by a PreToolUse guard hook that blocks unintended Claude subagents. Claude subagents run only when the active engine (and configured fallback) has a verified quota-ceiling marker or when a task requires a connector that exists only in Claude Code on this machine, found by setup. Use when the user wants to use Codex or Gemini for Claude Code helpers or subagents, switch helper engines per chat, save Claude quota, enforce subagent routing with a hook, or configure automatic fallback at quota limits.
 license: MIT
 compatibility: Needs Node.js 20 or newer and Claude Code (for the PreToolUse guard hook). Scripts have zero npm dependencies and run on Windows, macOS and Linux. Helper runners require at least one configured CLI (codex, gemini, or agy).
 ---
@@ -11,7 +11,7 @@ Run helper (subagent) tasks from Claude Code on Codex CLI, Gemini CLI, or Antigr
 
 - The main Claude chat only **writes the request file and verifies the result**.
 - The helper executes the bounded task in its own worktree and writes a short answer file.
-- The guard permits recognized Claude launches with a verified quota-ceiling fallback (`CLAUDE-ONLY: ceiling`) or an exclusive Claude tool (`CLAUDE-ONLY: tool <name>`), and every exception is logged for audit.
+- The guard permits recognized Claude launches with a verified quota-ceiling fallback (`CLAUDE-ONLY: ceiling`) or a configured Claude-only connector (`CLAUDE-ONLY: tool <name>` — a connector that exists only in Claude Code on this machine, found by setup), and every exception is logged for audit.
 
 ## When to use
 
@@ -26,8 +26,8 @@ Use this skill when:
 
 On first use or when the user asks to reconfigure, run the setup interview and retain their existing answers. Full questions, defaults, and config schema are in `references/setup.md`.
 
-1. Run `node scripts/detect.cjs` (read-only). Show the detected CLIs (`claude`, `codex`, `gemini`, `agy`), versions, and login state in plain words for the user to confirm or correct. Give official install/sign-in instructions for any missing tool; never ask for keys or tokens.
-2. Ask Round 1 and Round 2 questions (engines, default per role, opt-in vs all-chats default, fallback chain, quota ceilings and watchdog behavior, ceiling marker validity, models/effort, concurrency, shared-account share %, allowed Claude-only named agents, tool exceptions, audit log path).
+1. Run `node scripts/detect.cjs` (read-only). Show the detected CLIs (`claude`, `codex`, `gemini`, `agy`), versions, login state, and detected connectors (`claude`, `codex`, `gemini`, `agy`, `claudeOnly`) in plain words for the user to confirm or correct. Give official install/sign-in instructions for any missing tool; never ask for keys or tokens.
+2. Ask Round 1 and Round 2 questions (engines, default per role, opt-in vs all-chats default, fallback chain, quota ceilings and watchdog behavior, ceiling marker validity, models/effort, concurrency, shared-account share %, allowed Claude-only named agents, Claude-only connector exceptions from `connectors.claudeOnly`, audit log path).
 3. Write `~/.engine-switch/config.json` (verified against `scripts/config.cjs`), show a one-screen summary, print the `settings.json` hook snippet (`matcher: "Agent|Task|Workflow|Bash|PowerShell|Monitor"`), and verify `scripts/hooks/engine-guard.cjs` runs cleanly against a sample input.
 
 ## Per-chat engine switch
@@ -93,6 +93,6 @@ When that happens, the runner writes `~/.engine-switch/ceilings/<engine>.json` (
 
 **The only two valid exceptions** when the chat key is `codex` or `gemini` (searched across the entire serialized `tool_input`):
 1. `CLAUDE-ONLY: ceiling` — exact line, valid only when the required recent ceiling marker(s) exist on disk.
-2. `CLAUDE-ONLY: tool <name>` — where `<name>` exactly matches a user-configured Claude-only tool or the allowed named agent being invoked.
+2. `CLAUDE-ONLY: tool <name>` — where `<name>` exactly matches a configured Claude-only connector (a connector that exists only in Claude Code on this machine, found by setup, such as `my-db` or `browser`; default `[]`) or the allowed named agent being invoked.
 
 Allowed exceptions are appended to `~/.engine-switch/claude-exceptions.jsonl`. Any other `Agent`, `Task`, `fork`, named agent not in `guard.allowAgents`, `Workflow`, or `Bash` `claude -p` / `claude --print` call is denied by the hook. See `references/guard-hook.md` and `references/engines.md` for details.

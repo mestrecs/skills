@@ -51,7 +51,7 @@ Always show the default value that will be used if the user skips a question, an
    - Optionally set `review.<engine>.maxConcurrent` for individual engines.
 8. **Guard hook exceptions & audit log (`guard.allowAgents`, `guard.toolExceptions`, `guard.auditLog`)?** (Only needed if using the `PreToolUse` guard hook in Claude Code)
    - `allowAgents`: default `[]`.
-   - `toolExceptions`: default `[]`.
+   - `toolExceptions`: default `[]` — a connector that exists only in Claude Code on this machine, found by setup (e.g., `my-db`, `browser`).
    - `auditLog`: default `"~/.engine-switch/claude-exceptions.jsonl"`.
 
 ## Round 2 (per-engine details, only for selected engines)
@@ -115,7 +115,7 @@ Always show the default value that will be used if the user skips a question, an
 | `review.claude.model` | Model string | `"sonnet"` |
 | `review.claude.effort` | `"low"`, `"medium"`, or `"high"` | `"medium"` |
 | `guard.allowAgents` | Array of lowercase agent names | `[]` |
-| `guard.toolExceptions` | Array of exact tool names | `[]` |
+| `guard.toolExceptions` | Array of Claude-only connector names (found by setup) | `[]` |
 | `guard.auditLog` | Path to JSONL audit log | `"~/.engine-switch/claude-exceptions.jsonl"` |
 
 Skill format reference: [Agent Skills](https://agentskills.io).
