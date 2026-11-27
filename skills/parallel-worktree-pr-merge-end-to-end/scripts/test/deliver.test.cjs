@@ -107,6 +107,25 @@ test('e2e: red tests stop everything (exit 6), nothing merged', () => {
   assert.strictEqual(h.ghState(w).prs.length, 0, 'no PR for red code');
 });
 
+test('e2e: the whole suite runs in one slot and reports all failing commands and cases', () => {
+  const w = h.makeWorld({ testCommand: [
+    'node -e "console.log(\'not ok 1 - first case\'); process.exit(1)"',
+    'node -e "console.log(\'FAIL second case\'); process.exit(2)"',
+    'node -e "console.log(\'third command ran\')"',
+  ] });
+  const dir = h.newTask(w, 'batch-red');
+  const r = h.deliver(w, dir);
+  assert.equal(r.status, 6, r.stderr);
+  assert.match(r.stderr, /Test command 1 \(exit 1\)[\s\S]+Test command 2 \(exit 2\)/);
+  assert.match(r.stderr, /not ok 1 - first case/);
+  assert.match(r.stderr, /FAIL second case/);
+  assert.equal(runs(w), 1);
+  const logs = path.join(w.home, 'suite-logs');
+  const [log] = fs.readdirSync(logs);
+  assert.match(fs.readFileSync(path.join(logs, log), 'utf8'), /third command ran/);
+  assert.equal(h.ghState(w).prs.length, 0);
+});
+
 test('e2e: conflict with base (exit 5)', () => {
   const w = h.makeWorld();
   const dir = h.newTask(w, 'conf', { 'a.txt': 'mine\n' });
@@ -159,6 +178,58 @@ test('e2e: critical path, reviewer blocks (exit 3), nothing merged', () => {
   assert.strictEqual(again.status, 3);
   assert.match(again.stderr, /blocked/);
   assert.ok(h.ghState(w).calls.length >= calls);
+});
+
+test('e2e: changed code gets a follow-up, two BLOCKs require separation, and delivery logs timing', () => {
+  const w = h.makeWorld();
+  const dir = h.newTask(w, 'ceiling', { 'secure/key.js': 'initial\n' });
+  process.env.FAKE_ENGINE_VERDICT = 'BLOCK';
+  process.env.FAKE_ENGINE_PROMPT = path.join(w.tmp, 'prompt.txt');
+  const fix = (text) => {
+    fs.writeFileSync(path.join(dir, 'secure/key.js'), text + '\n');
+    h.git(dir, ['commit', '-am', text]);
+  };
+  assert.equal(h.deliver(w, dir).status, 3);
+  fix('second version');
+  assert.equal(h.deliver(w, dir).status, 3);
+  const second = fs.readFileSync(process.env.FAKE_ENGINE_PROMPT, 'utf8');
+  assert.match(second, /RESOLVED, PARTIAL, or OPEN/);
+  assert.match(second, /P2-NEW/);
+  fix('optional part removed');
+  const stopped = h.deliver(w, dir);
+  assert.equal(stopped.status, 3);
+  assert.match(stopped.stderr, /--separated/);
+  assert.equal(fs.readFileSync(process.env.FAKE_ENGINE_PROMPT, 'utf8'), second);
+  const direct = h.node('review.cjs', ['--pr', '1', '--dir', dir], dir);
+  assert.equal(direct.status, 6, direct.stderr);
+  process.env.FAKE_ENGINE_VERDICT = 'APPROVE';
+  const done = h.deliver(w, dir, ['--separated', 'moved the optional part to its own PR']);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(fs.readFileSync(process.env.FAKE_ENGINE_PROMPT, 'utf8'), /moved the optional part to its own PR/);
+  const events = fs.readFileSync(path.join(w.home, 'queue.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  const last = events.filter((e) => e.event === 'delivery').at(-1);
+  assert.equal(last.blocks, 2);
+  assert.equal(last.reviewedHeads, 3);
+  assert.equal(last.reviewerEngine, 'claude');
+  for (const ms of [last.stagesMs.push, last.stagesMs.review, last.stagesMs.tests, last.stagesMs.merge, last.reviewerFixCommitMs]) {
+    assert.ok(Number.isInteger(ms) && ms >= 0);
+  }
+});
+
+test('e2e: squash delivery waits for green checks before merging', () => {
+  const w = h.makeWorld();
+  const dir = h.newTask(w, 'checks');
+  process.env.FAKE_CHECKS_FAIL = '1';
+  const failed = h.deliver(w, dir, ['--wait-for-checks', '--squash']);
+  assert.equal(failed.status, 4, failed.stderr);
+  assert.ok(!h.ghState(w).calls.includes('pr merge'));
+  delete process.env.FAKE_CHECKS_FAIL;
+  const done = h.deliver(w, dir, ['--wait-for-checks', '--squash', '--author-email', 'ci@users.noreply.github.com']);
+  assert.equal(done.status, 0, done.stderr);
+  const { calls } = h.ghState(w);
+  assert.ok(calls.lastIndexOf('pr checks') < calls.indexOf('pr merge'));
+  assert.ok(calls.includes('SQUASH'));
+  assert.ok(calls.includes('AUTHOR ci@users.noreply.github.com'));
 });
 
 test('e2e: reviewer without a verdict is skipped, next engine is used', () => {

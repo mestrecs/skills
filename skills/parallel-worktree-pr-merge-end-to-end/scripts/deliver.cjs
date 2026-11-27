@@ -1,6 +1,7 @@
 'use strict';
 // The whole delivery of one task, from the task's own worktree:
-//   node deliver.cjs --dir <worktree> --body <file> [--title "..."] [--max-wait <seconds>]
+//   node deliver.cjs --dir <worktree> --body <file|-> [--title "..."] [--max-wait <seconds>]
+//                    [--separated "<what left the change>"] [--squash] [--wait-for-checks] [--author-email <email>]
 // Exit codes: 0 done | 1 merged, but a post-merge step failed | 2 usage/config error
 //             3 review missing or blocked | 4 gate refused | 5 conflict with base
 //             6 tests red | 7 another delivery holds the merge lock
@@ -9,6 +10,7 @@ const path = require('path');
 const common = require('./common.cjs');
 const { loadConfig, repoRoot, mainRoot } = require('./config.cjs');
 const review = require('./review.cjs');
+const { BLOCK_LIMIT, SEPARATION_REQUIRED, parseSeparation, reviewHistory } = require('./review-round.cjs');
 
 const DOC_RE = /\.(md|mdx|rst|txt)$/i;
 
@@ -119,13 +121,10 @@ function syncWithBase(dir, base) {
 
 function runTests(dir, cfg) {
   if (!cfg.testCommand) { say('no testCommand configured: skipping the suite'); return true; }
-  const r = common.run(process.execPath, [path.join(__dirname, 'test-queue.cjs'), '--', cfg.testCommand], { cwd: dir });
-  if (r.status !== 0) {
-    say('tests are red (exit ' + r.status + '). Last lines:');
-    console.error(common.tail(r.stdout + '\n' + r.stderr, 60));
-    return false;
-  }
-  return true;
+  const commands = [].concat(cfg.testCommand);
+  const r = common.run(process.execPath, [path.join(__dirname, 'test-queue.cjs'), '--batch', '--', ...commands], { cwd: dir });
+  if (r.stderr.trim()) console.error(r.stderr.trimEnd());
+  return r.status === 0;
 }
 
 function pushBranch(dir, branch) {
@@ -139,15 +138,15 @@ function ghJson(args) {
   return JSON.parse(r.stdout || 'null');
 }
 
-function ensurePr(cfg, branch, title, bodyFile) {
+function ensurePr(cfg, branch, title, body) {
   const find = () => ghJson(['pr', 'list', '--repo', cfg.repo, '--head', branch, '--state', 'open', '--json', 'number,url']);
   let prs = find();
   if (prs.length) {
-    const e = common.gh(['pr', 'edit', String(prs[0].number), '--repo', cfg.repo, '--title', title, '--body-file', bodyFile]);
+    const e = common.gh(['pr', 'edit', String(prs[0].number), '--repo', cfg.repo, '--title', title, '--body-file', '-'], { input: body });
     if (e.status !== 0) say('could not update the PR text: ' + common.tail(e.stderr, 5));
     return prs[0].number;
   }
-  const c = common.gh(['pr', 'create', '--repo', cfg.repo, '--base', cfg.baseBranch, '--head', branch, '--title', title, '--body-file', bodyFile]);
+  const c = common.gh(['pr', 'create', '--repo', cfg.repo, '--base', cfg.baseBranch, '--head', branch, '--title', title, '--body-file', '-'], { input: body });
   if (c.status !== 0) throw new Stop(4, 'gh pr create failed: ' + common.tail(c.stderr, 10));
   prs = find();
   if (!prs.length) throw new Stop(4, 'PR was created but cannot be found');
@@ -167,7 +166,8 @@ function reviewGate(dir, cfg, n) {
   const mb = common.git(dir, ['merge-base', rv.head, 'origin/' + cfg.baseBranch]);
   if (mb.status === 0) moved = changedFiles(dir, mb.stdout.trim(), 'origin/' + cfg.baseBranch);
   const g = review.gateReviewOk(text, { headIsDescendant: desc, filesSinceReview: since, baseMovedFiles: moved });
-  return Object.assign(g, { verdict: rv.verdict, stale: !g.ok && rv.verdict === 'APPROVE' });
+  const codeChanged = since.some((file) => !review.normPath(file).startsWith('reviews/'));
+  return Object.assign(g, { verdict: rv.verdict, stale: !desc || codeChanged });
 }
 
 function acquireMergeLock(cfg, maxWaitMs) {
@@ -175,7 +175,7 @@ function acquireMergeLock(cfg, maxWaitMs) {
   const started = Date.now();
   const poll = Number(process.env.PARALLEL_PR_POLL_MS) || 3000;
   let told = false;
-  while (!common.tryCreateLock(file, { repo: cfg.repo }, 30 * 60 * 1000)) {
+  while (!common.tryCreateLock(file, { repo: cfg.repo }, 0)) {
     if (Date.now() - started > maxWaitMs) throw new Stop(7, 'another delivery holds the merge lock for ' + cfg.repo);
     if (!told) { say('waiting for the merge lock...'); told = true; }
     common.sleepSync(poll);
@@ -218,17 +218,46 @@ async function deploy(cfg, mergedSha) {
   }
 }
 
-async function deliver(argv) {
+async function deliver(argv, readConfig = loadConfig) {
   let flags;
+  let separated;
   try {
-    flags = common.parseFlags(argv, { dir: 'string', body: 'string', title: 'string', 'max-wait': 'string' }).flags;
+    const parsed = common.parseFlags(argv, { dir: 'string', body: 'string', title: 'string', 'max-wait': 'string',
+      separated: 'string', squash: 'bool', 'wait-for-checks': 'bool', 'author-email': 'string' });
+    if (parsed.rest.length) throw new Error('unknown delivery arguments');
+    flags = parsed.flags;
+    separated = parseSeparation(flags.separated);
   } catch (e) { throw new Stop(2, e.message); }
-  if (!flags.dir || !flags.body) throw new Stop(2, 'usage: deliver.cjs --dir <worktree> --body <file> [--title "..."] [--max-wait <s>]');
+  if (!flags.dir || !flags.body) throw new Stop(2, 'usage: deliver.cjs --dir <worktree> --body <file|-> [--title "..."] [--max-wait <s>] [--separated "<what left the change>"] [--squash] [--wait-for-checks] [--author-email <email>]');
   const dir = path.resolve(flags.dir);
-  const bodyFile = path.resolve(flags.body);
-  if (!fs.existsSync(bodyFile)) throw new Stop(2, 'body file not found: ' + bodyFile);
+  let body;
   let cfg;
-  try { cfg = loadConfig(repoRoot(dir)); } catch (e) { throw new Stop(2, e.message); }
+  try {
+    body = fs.readFileSync(flags.body === '-' ? 0 : path.resolve(flags.body), 'utf8');
+    cfg = readConfig(repoRoot(dir));
+  } catch (e) { throw new Stop(2, e.message); }
+  const record = { event: 'delivery', repo: cfg.repo, stagesMs: {} };
+  const started = performance.now();
+  try {
+    record.exit = await deliverBranch({ dir, cfg, flags, body, separated, record });
+    return record.exit;
+  } catch (err) {
+    record.exit = err.exitCode || 2;
+    throw err;
+  } finally {
+    record.totalMs = Math.round(performance.now() - started);
+    common.appendLog(path.join(common.parallelHome(), 'queue.jsonl'), record);
+  }
+}
+
+async function deliverBranch({ dir, cfg, flags, body, separated, record }) {
+  const recordTime = (stage, start) => {
+    record.stagesMs[stage] = (record.stagesMs[stage] || 0) + Math.round(performance.now() - start);
+  };
+  const time = (stage, run) => {
+    const start = performance.now();
+    try { return run(); } finally { recordTime(stage, start); }
+  };
   const base = cfg.baseBranch;
   const branch = common.gitOut(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   if (branch === 'HEAD' || branch === base) throw new Stop(2, 'run this from a task branch, not from ' + branch);
@@ -236,13 +265,13 @@ async function deliver(argv) {
   if (dirty.length) throw new Stop(2, 'uncommitted changes (commit the files you touched, by name): ' + dirty.slice(0, 5).join(', '));
 
   // 1. up to date with base
-  if (!syncWithBase(dir, base)) throw new Stop(5, 'conflict with ' + base + ': resolve it in the worktree and run again');
+  if (!time('sync', () => syncWithBase(dir, base))) throw new Stop(5, 'conflict with ' + base + ': resolve it in the worktree and run again');
   let files = changedFiles(dir, 'origin/' + base, 'HEAD');
   if (!files.length) throw new Stop(2, 'nothing to deliver: no difference from ' + base);
 
   // docs only, straight to base when the owner allows it
-  if (cfg.docsDirectToBase && isDocsOnly(files)) {
-    const p = common.git(dir, ['push', 'origin', 'HEAD:refs/heads/' + base]);
+  if (cfg.docsDirectToBase && isDocsOnly(files) && !flags.squash && !flags['wait-for-checks'] && !flags['author-email']) {
+    const p = time('push', () => common.git(dir, ['push', 'origin', 'HEAD:refs/heads/' + base]));
     if (p.status !== 0) throw new Stop(4, 'direct push to ' + base + ' refused: ' + common.tail(p.stderr, 10));
     say('docs only: pushed straight to ' + base);
     return 0;
@@ -250,29 +279,48 @@ async function deliver(argv) {
 
   // 2. quick check, tests, push
   if (cfg.quickCheckCommand) {
-    const q = common.run(cfg.quickCheckCommand, [], { cwd: dir, shell: true });
+    const q = time('quickCheck', () => common.run(cfg.quickCheckCommand, [], { cwd: dir, shell: true }));
     if (q.status !== 0) { console.error(common.tail(q.stdout + q.stderr, 40)); throw new Stop(6, 'quick check failed'); }
   }
-  if (!runTests(dir, cfg)) throw new Stop(6, 'tests are red');
+  if (!time('tests', () => runTests(dir, cfg))) throw new Stop(6, 'tests are red');
   const tested = { head: sha(dir, 'HEAD'), base: sha(dir, 'origin/' + base) };
-  pushBranch(dir, branch);
+  time('push', () => pushBranch(dir, branch));
 
   // 3. pull request
   const title = flags.title || common.gitOut(dir, ['log', '-1', '--format=%s']);
-  const n = ensurePr(cfg, branch, title, bodyFile);
+  const n = time('pullRequest', () => ensurePr(cfg, branch, title, body));
+  record.pr = n;
   say('PR ' + n);
 
   // 4. review (outside the merge lock: it is slow)
   const reviewRequired = review.needsReview(cfg.review, files);
   if (reviewRequired) {
+    const readHistory = () => {
+      const history = reviewHistory((args) => common.gitOut(dir, args), 'origin/' + base, sha(dir, 'HEAD'),
+        'reviews/REVIEW-PR' + n + '.md', review.parseReviewFile);
+      record.blocks = history.blocks;
+      record.reviewedHeads = history.reviewedHeads;
+      return history;
+    };
+    const history = readHistory();
     let g = reviewGate(dir, cfg, n);
+    if (!g.ok && history.blocks >= BLOCK_LIMIT && !separated) throw new Stop(3, SEPARATION_REQUIRED);
     if (!g.ok && g.verdict === 'BLOCK' && !g.stale) {
       // a BLOCK on this very code: do not ask again, the author must change something
       throw new Stop(3, 'review blocked this change (see reviews/REVIEW-PR' + n + '.md): ' + g.reason);
     }
     if (!g.ok) {
       say('review required: asking another model');
-      const r = common.run(process.execPath, [path.join(__dirname, 'review.cjs'), '--pr', String(n), '--dir', dir]);
+      const args = [path.join(__dirname, 'review.cjs'), '--pr', String(n), '--dir', dir];
+      if (separated) args.push('--separated', separated);
+      const r = time('review', () => common.run(process.execPath, args, { cwd: dir }));
+      const engines = [...r.stderr.matchAll(/^\[review\] running (claude|codex|gemini)$/gm)];
+      if (engines.length) record.reviewerEngine = engines[engines.length - 1][1];
+      if (r.status === 0) {
+        const summary = JSON.parse(r.stdout);
+        record.reviewerFixCommitMs = summary.fixCommitMs;
+      }
+      readHistory();
       if (r.status !== 0) throw new Stop(3, 'review did not finish (exit ' + r.status + '): ' + common.tail(r.stderr, 8));
       g = reviewGate(dir, cfg, n);
       if (!g.ok) throw new Stop(3, 'review blocked this change: ' + g.reason);
@@ -280,32 +328,35 @@ async function deliver(argv) {
   }
 
   // 5. merge lock, then re-check everything that may have changed meanwhile
-  const lockFile = acquireMergeLock(cfg, Number(flags['max-wait'] || 900) * 1000);
+  const lockFile = time('mergeQueue', () => acquireMergeLock(cfg, Number(flags['max-wait'] || 900) * 1000));
   let merged = null;
   try {
-    if (!syncWithBase(dir, base)) throw new Stop(5, 'conflict with ' + base + ' while waiting for the merge lock');
+    if (!time('sync', () => syncWithBase(dir, base))) throw new Stop(5, 'conflict with ' + base + ' while waiting for the merge lock');
     const state = {
       testedHead: tested.head, testedBase: tested.base, head: sha(dir, 'HEAD'), baseNow: sha(dir, 'origin/' + base),
       filesSinceTested: changedFiles(dir, tested.head, 'HEAD'),
     };
     if (needRetest(state)) {
       say('base or code moved since the tests: running the suite again');
-      if (!runTests(dir, cfg)) throw new Stop(6, 'tests are red after syncing');
+      if (!time('tests', () => runTests(dir, cfg))) throw new Stop(6, 'tests are red after syncing');
       tested.head = sha(dir, 'HEAD');
       tested.base = sha(dir, 'origin/' + base);
-      pushBranch(dir, branch);
+      time('push', () => pushBranch(dir, branch));
     }
     const head = sha(dir, 'HEAD');
     files = changedFiles(dir, 'origin/' + base, 'HEAD');
-    const gate = decideGate({
+    const gate = time('gate', () => decideGate({
       pushed: remoteHead(dir, branch) === head,
       upToDate: isAncestor(dir, 'origin/' + base, 'HEAD'),
       testsGreen: !needRetest({ testedHead: tested.head, testedBase: tested.base, head, baseNow: sha(dir, 'origin/' + base), filesSinceTested: changedFiles(dir, tested.head, head) }),
       reviewRequired: review.needsReview(cfg.review, files),
-      review: reviewRequired ? reviewGate(dir, cfg, n) : { ok: true },
-    });
+      review: review.needsReview(cfg.review, files) ? reviewGate(dir, cfg, n) : { ok: true },
+    }));
     if (!gate.ok) throw new Stop(4, 'gate refused: ' + gate.reason);
-    const m = common.gh(['pr', 'merge', String(n), '--repo', cfg.repo, '--merge', '--match-head-commit', head]);
+    if (flags['wait-for-checks']) time('checks', () => waitForChecks(cfg, n, dir, tested.base));
+    const mergeArgs = ['pr', 'merge', String(n), '--repo', cfg.repo, flags.squash ? '--squash' : '--merge', '--match-head-commit', head];
+    if (flags['author-email']) mergeArgs.push('--author-email', flags['author-email']);
+    const m = time('merge', () => common.gh(mergeArgs, { cwd: dir }));
     if (m.status !== 0) throw new Stop(4, 'merge refused: ' + common.tail(m.stderr || m.stdout, 10));
     merged = head;
     say('merged PR ' + n + ' at ' + head.slice(0, 8));
@@ -315,13 +366,24 @@ async function deliver(argv) {
 
   // 6. after the merge: cleanup, deploy, health. The code is already in; failures here exit 1.
   const problems = [];
+  const cleanupStarted = performance.now();
   try {
     if (branch.startsWith('pr/')) {
       const r = common.run(process.execPath, [path.join(__dirname, 'worktree.cjs'), 'remove', branch.slice(3), '--delete-branch'], { cwd: mainRoot(dir) });
       if (r.status !== 0) problems.push('cleanup: ' + common.tail(r.stderr, 5));
     }
   } catch (e) { problems.push('cleanup: ' + e.message); }
-  try { await deploy(cfg, merged); } catch (e) { problems.push(e.message); }
+  finally { recordTime('cleanup', cleanupStarted); }
+  const deployStarted = performance.now();
+  try {
+    if (cfg.deploy.mode === 'vps-actions') {
+      const result = ghJson(['pr', 'view', String(n), '--repo', cfg.repo, '--json', 'mergeCommit']);
+      merged = result.mergeCommit?.oid;
+      if (!merged) throw new Error('could not identify the merge commit for deploy');
+    }
+    await deploy(cfg, merged);
+  } catch (e) { problems.push(e.message); }
+  finally { recordTime('deploy', deployStarted); }
   if (problems.length) {
     for (const p of problems) say('POST-MERGE PROBLEM: ' + p);
     return 1;
@@ -330,7 +392,24 @@ async function deliver(argv) {
   return 0;
 }
 
-module.exports = { needRetest, decideGate, isDocsOnly, dirtyFiles, inWindow, checkHealth, shellQuote };
+function waitForChecks(cfg, n, dir, testedBase) {
+  say('waiting for GitHub checks on PR ' + n);
+  const deadline = Date.now() + 60000;
+  for (;;) {
+    const checks = common.gh(['pr', 'checks', String(n), '--repo', cfg.repo, '--watch', '--interval', '10'], { cwd: dir, timeout: 30 * 60 * 1000 });
+    if (checks.status === 0) break;
+    if (!/no checks reported/i.test(checks.stderr) || Date.now() >= deadline) {
+      throw new Stop(4, 'GitHub checks did not pass for PR ' + n + ': ' + common.tail(checks.stderr || checks.stdout, 15));
+    }
+    common.sleepSync(3000);
+  }
+  const fetched = common.git(dir, ['fetch', 'origin', cfg.baseBranch]);
+  if (fetched.status !== 0 || sha(dir, 'origin/' + cfg.baseBranch) !== testedBase) {
+    throw new Stop(4, 'could not confirm the tested base after CI; rerun delivery');
+  }
+}
+
+module.exports = { deliver, needRetest, decideGate, isDocsOnly, dirtyFiles, inWindow, checkHealth, shellQuote };
 
 if (require.main === module) {
   deliver(process.argv.slice(2)).then((code) => process.exit(code), (e) => {

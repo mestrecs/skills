@@ -32,16 +32,21 @@ if (a[0] === 'pr' && a[1] === 'list') {
   const state = opt('--state'); const head = opt('--head');
   console.log(JSON.stringify(st.prs.filter((p) => p.head === head && p.state === state).map((p) => ({ number: p.number, url: 'https://example.invalid/pr/' + p.number }))));
 } else if (a[0] === 'pr' && a[1] === 'create') {
-  st.prs.push({ number: st.prs.length + 1, head: opt('--head'), title: opt('--title'), body: fs.readFileSync(opt('--body-file'), 'utf8'), state: 'open' });
+  st.prs.push({ number: st.prs.length + 1, head: opt('--head'), title: opt('--title'), body: fs.readFileSync(opt('--body-file') === '-' ? 0 : opt('--body-file'), 'utf8'), state: 'open' });
   save(); console.log('https://example.invalid/pr/' + st.prs.length);
 } else if (a[0] === 'pr' && a[1] === 'edit') { save(); }
 else if (a[0] === 'pr' && a[1] === 'view') {
   const p = st.prs.find((x) => x.number === Number(a[2]));
   console.log(JSON.stringify({ headRefOid: git('rev-parse', 'refs/heads/' + p.head), headRefName: p.head, title: p.title, body: p.body }));
+} else if (a[0] === 'pr' && a[1] === 'checks') {
+  if (!a.includes('--watch')) process.exit(1);
+  if (process.env.FAKE_CHECKS_FAIL) { save(); console.error('checks failed'); process.exit(1); }
 } else if (a[0] === 'pr' && a[1] === 'merge') {
   const p = st.prs.find((x) => x.number === Number(a[2])); const want = opt('--match-head-commit');
   const have = git('rev-parse', 'refs/heads/' + p.head);
   st.calls.push('MATCH ' + want + ' HAVE ' + have);
+  if (a.includes('--squash')) st.calls.push('SQUASH');
+  if (opt('--author-email')) st.calls.push('AUTHOR ' + opt('--author-email'));
   if (!want || want !== have) { save(); console.error('head commit does not match'); process.exit(1); }
   try { git('merge-base', '--is-ancestor', 'refs/heads/main', have); } catch (_) { save(); console.error('not fast-forward'); process.exit(1); }
   git('update-ref', 'refs/heads/main', have); p.state = 'merged'; save();
@@ -53,7 +58,8 @@ const FAKE_ENGINE = `'use strict';
 const cp = require('child_process'); const fs = require('fs');
 if (process.argv[2] === '--version') { console.log('fake 1'); process.exit(0); }
 const v = process.env.FAKE_ENGINE_VERDICT || 'APPROVE';
-fs.readFileSync(0);
+const prompt = fs.readFileSync(0, 'utf8');
+if (process.env.FAKE_ENGINE_PROMPT) fs.writeFileSync(process.env.FAKE_ENGINE_PROMPT, prompt);
 if (process.env.FAKE_ENGINE_FIX) {
   fs.writeFileSync('reviewer-fix.txt', 'fixed\\n');
   cp.execFileSync('git', ['add', 'reviewer-fix.txt']); cp.execFileSync('git', ['commit', '-m', 'fix by reviewer', '--', 'reviewer-fix.txt']);
@@ -108,6 +114,8 @@ function makeWorld(overrides) {
     FAKE_ENGINE_VERDICT: 'APPROVE',
   });
   delete process.env.FAKE_ENGINE_FIX;
+  delete process.env.FAKE_ENGINE_PROMPT;
+  delete process.env.FAKE_CHECKS_FAIL;
   return { tmp, origin, repo, home, state, engine, missing, wtRoot: path.join(tmp, 'widgets-wt') };
 }
 

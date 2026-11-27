@@ -1,6 +1,10 @@
 {
   "skill": "parallel-worktree-pr-merge-end-to-end",
   "should_trigger": [
+    { "prompt": "Deliver this PR again after two reviewers blocked the optional scheduler. Can delivery stop until I separate it and rerun with a description?", "reason": "Exercises the two-BLOCK delivery ceiling and separation handoff." },
+    { "prompt": "My delivery has separate unit and integration commands. Run both even when the first fails and show every failing part with the full log.", "reason": "Exercises one queued suite with aggregate failures and a full log." },
+    { "prompt": "Show me the last delivery's test, push, review, and merge times along with its engine, reviewer fix commit time, blocks, and reviewed heads.", "reason": "Exercises stage timings and review metadata in the delivery record." },
+    { "prompt": "Ship this worktree through a squash merge after the GitHub checks pass.", "reason": "Exercises the delivery gate with hosted checks and squash merge." },
     { "prompt": "I have three Claude Code chats open on the same repo and they keep overwriting each other's files. How do I stop that?", "reason": "Several chats on one repo colliding is the core problem the skill solves." },
     { "prompt": "Open a PR for this change, get another model to review it, and merge it safely when it is green.", "reason": "Asks for PR, cross-model review and a safe merge end to end." },
     { "prompt": "Set up git worktrees so my agents each work in their own folder and I can merge their branches one after another.", "reason": "Worktree per agent plus ordered merges." },

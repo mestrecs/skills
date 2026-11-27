@@ -1,7 +1,7 @@
 {
   "name": "parallel-worktree-pr-merge-end-to-end",
   "description": "Run many AI coding chats in parallel on the same repo without one breaking another: each gets its own worktree, then pull request, tests, cross-model review and merge, end to end.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "mestrecs" },
   "homepage": "https://github.com/mestrecs/skills",
   "repository": "https://github.com/mestrecs/skills",

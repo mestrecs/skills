@@ -1,6 +1,9 @@
 {
   "skill": "cross-model-code-review-codex-gemini-claude",
   "should_trigger": [
+    { "prompt": "Give PR #42 its first independent review. Check duplicate effects, crashes before and after saves or sends, concurrency, tenant boundaries, and optional scheduled behavior. List every finding with its ID, severity, and proof.", "reason": "Exercises the exhaustive first-round review and complete evidence-backed report." },
+    { "prompt": "Run the second review of PR #42. Reconcile each existing finding against the fix diff. Report a newly noticed low-severity issue outside the diff without blocking on it.", "reason": "Exercises prior finding statuses, the last-reviewed-head diff, and P2-NEW." },
+    { "prompt": "PR #42 already has two BLOCK reports. Move the optional job to its own PR before asking for another review and tell the reviewer what moved.", "reason": "Exercises the review ceiling and the required separation description." },
     { "prompt": "Review PR #42 with Codex and fall back to Gemini or Claude only if it hits quota.", "reason": "Requests cross-model PR review with ordered quota-ceiling fallback." },
     { "prompt": "Use gemini reviewer for this chat instead of Codex.", "reason": "Asks to switch the reviewer engine per chat." },
     { "prompt": "Review my local branch diff against main using a different model from the one that wrote it.", "reason": "Requests independent cross-model review on a local branch diff." },

@@ -29,8 +29,8 @@ Use it when two or more chats (or a chat and a human) may touch the same repo at
 | Start a task in its own worktree | `node scripts/worktree.cjs new <task-slug>` | 0 path printed, 2 error |
 | List or remove worktrees | `node scripts/worktree.cjs list` / `remove <slug> [--delete-branch]` | 0, 2 |
 | Run any heavy command through the queue | `node scripts/test-queue.cjs [--timeout <s>] -- <command...>` | the command's own, 124 gave up waiting |
-| Ask another model to review a PR | `node scripts/review.cjs --pr <n> [--dir <wt>] [--engine <name>] [--max-wait <s>]` | 0 written, 2 usage, 3 no engine or no verdict |
-| Deliver the task | `node scripts/deliver.cjs --dir <wt> --body <file> [--title "..."] [--max-wait <s>]` | see the table below |
+| Ask another model to review a PR | `node scripts/review.cjs --pr <n> [--dir <wt>] [--engine <name>] [--max-wait <s>] [--separated "..."]` | 0 written, 2 usage, 3 no engine or usable verdict, 6 separation required |
+| Deliver the task | `node scripts/deliver.cjs --dir <wt> --body <file> [--title "..."] [--max-wait <s>] [--separated "..."]` | see the table below |
 | Clear merged worktrees and branches | `node scripts/cleanup.cjs [--dry-run]` | 0 |
 
 ## First run: setup before any work
@@ -66,13 +66,19 @@ How to ask, per tool:
 | 0 | Done (or merged with `DEPLOY-DEFERRED` outside the restart window) | Report merged, live, checked. If deferred, run the deploy inside the window. |
 | 1 | Merged, but cleanup, deploy or health check failed | Do not revert blindly. Read `references/deploy.md`; fix forward or revert with a new PR. |
 | 2 | Usage or config error, dirty worktree, nothing to deliver | Read the message; commit the files you touched, fix the flag or config. |
-| 3 | Review missing or blocked | Read `reviews/REVIEW-PR<n>.md`, fix, run again. |
+| 3 | Review missing or blocked | Read `reviews/REVIEW-PR<n>.md`, fix, and run again. After two BLOCKs, use the separation step below. |
 | 4 | Gate refused, push refused or `gh` failed | Read the printed reason (behind base, no approval for this head, remote moved). |
 | 5 | Merge conflict with base | Merge base in the worktree, resolve, commit, run again. |
 | 6 | Tests red | Find the cause. Never retry until green. |
 | 7 | Merge lock busy past `--max-wait` (default 900 s) | Run again later; start the next task meanwhile. |
 
 Docs-only changes go straight to the base branch when `docsDirectToBase` is true (and skip review).
+
+Set `testCommand` to a command string or a list of commands. The queue runs all commands in one slot even if one fails, then lists failures together and prints the path to the full redacted log. The delivery record in `~/.parallel-pr/queue.jsonl` includes stage timings, reviewer engine and fix commit time when available, and counts of BLOCKs and distinct reviewed heads.
+
+After two BLOCKs, move the blocking part into a separate PR or put it behind a flag that defaults to off. Commit the separation and run delivery with `--separated "<what left the change>"`. The reviewer checks the separation in the follow-up diff.
+
+Use `--body -` to read the PR description from stdin. Use `--squash` to request a squash merge and `--wait-for-checks` to wait for GitHub checks to pass before merging. Pass `--author-email` to set the merge commit author's address explicitly, such as your GitHub noreply address.
 
 ## Non-negotiable rules
 

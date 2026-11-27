@@ -69,6 +69,10 @@ function validateConfig(cfg) {
   if (typeof cfg.baseBranch !== 'string' || !/^[\w./-]+$/.test(cfg.baseBranch) || cfg.baseBranch.startsWith('-')) e.push('baseBranch is not a safe branch name');
   if (typeof cfg.worktreeDir !== 'string' || !cfg.worktreeDir) e.push('worktreeDir must be a non-empty string');
   if (!Array.isArray(cfg.linkDependencies) || cfg.linkDependencies.some((d) => typeof d !== 'string' || d.startsWith('/') || d.includes('..'))) e.push('linkDependencies must be relative paths inside the repo');
+  const commands = Array.isArray(cfg.testCommand) ? cfg.testCommand : [cfg.testCommand];
+  if (cfg.testCommand !== null && (!commands.length || commands.some((cmd) => typeof cmd !== 'string' || !cmd.trim()))) {
+    e.push('testCommand must be null, a command string, or a non-empty list of command strings');
+  }
   const p = cfg.parallel || {};
   if (!Number.isInteger(p.suiteSlots) || p.suiteSlots < 1) e.push('parallel.suiteSlots must be an integer >= 1');
   if (typeof p.stuckSuiteMinutes !== 'number' || p.stuckSuiteMinutes < 0) e.push('parallel.stuckSuiteMinutes must be >= 0');

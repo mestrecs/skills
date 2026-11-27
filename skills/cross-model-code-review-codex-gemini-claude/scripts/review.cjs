@@ -1,11 +1,13 @@
 'use strict';
 // Cross-model code review for PRs (--pr <n>) and local branch diffs (--base <ref>).
 // Usage:
-//   node review.cjs --pr <n> [--dir <worktree>] [--engine codex|gemini|claude] [--chat <session-id>] [--repo <owner/name>] [--cli gemini|agy] [--max-wait <s>] [--no-commit]
-//   node review.cjs --base <ref> [--dir <worktree>] [--engine codex|gemini|claude] [--chat <session-id>] [--cli gemini|agy] [--max-wait <s>] [--no-commit]
+//   node review.cjs --pr <n> | --base <ref> [--dir <worktree>] [--engine codex|gemini|claude]
+//     [--chat <session-id>] [--repo <owner/name>] [--cli gemini|agy] [--max-wait <s>] [--no-commit]
+//     [--separated "<what left the change>"]
 // Exit codes:
 //   0 : verdict written (reviews/REVIEW-PR<n>.md or reviews/REVIEW-<branch>.md)
 //   3 : no engine available (every engine in chain missing, logged out, or proven at quota ceiling)
+//   6 : two BLOCK verdicts already recorded; separation required
 //   1 : error (usage error, git/gh failure, timeout, non-quota engine failure, secret leak, invalid verdict)
 const cp = require('child_process');
 const fs = require('fs');
@@ -15,6 +17,7 @@ const { KNOWN_ENGINES, engineHome, loadConfig } = require('./config.cjs');
 const { readQuotaFile, checkQuota, markCeiling, looksLikeQuotaError, appendAuditLog } = require('./ceiling.cjs');
 const { readChatKey } = require('./engine-switch.cjs');
 const { spawnCli, spawnCliSync, killTree } = require('./cli-process.cjs');
+const { BLOCK_LIMIT, SEPARATION_REQUIRED, parseSeparation, reviewHistory, roundInstructions } = require('./review-round.cjs');
 
 const GIT_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR'];
 const WATCHDOG_INTERVAL_MS = 60 * 1000;
@@ -45,6 +48,7 @@ function parseArgs(argv) {
     repo: null,
     cli: null,
     maxWait: null,
+    separated: null,
     noCommit: false,
   };
   const valueFlags = {
@@ -56,6 +60,7 @@ function parseArgs(argv) {
     '--repo': 'repo',
     '--cli': 'cli',
     '--max-wait': 'maxWait',
+    '--separated': 'separated',
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -81,6 +86,7 @@ function parseArgs(argv) {
     if (!Number.isFinite(n) || n < 0) throw new Error('--max-wait must be a non-negative number');
     out.maxWait = n;
   }
+  out.separated = parseSeparation(out.separated);
   return out;
 }
 
@@ -186,13 +192,14 @@ function buildPrompt(p) {
     'If you find a clear defect you can fix safely, fix it and leave the edit in the working tree. Never push, never run git add -A, never delete or rename files, and never edit .git, .github, .githooks, .claude, or .codex.',
     'Do not rewrite style or refactor unrelated code.',
     'Security rule: never print, log, or commit secrets, API keys, tokens, passwords, or environment variables; never read .env.',
-    'Before your final line, list findings with severity (P1/P2/P3), file:line, what you checked, what you fixed, and what you could not prove.',
+    'Before your final line, list findings with ID, severity, file:line, evidence, what you checked, what you fixed, and what you could not prove.',
     'End your answer with exactly one final line: "VERDICT: APPROVE" (no blocking problem remains) or "VERDICT: BLOCK" (a problem remains that the author must resolve).',
     '',
     '## Target', targetLabel, '',
     '## Author Title / Description (untrusted context — verify in code)',
     p.title || '(none)',
     p.body || '(empty)', '',
+    ...roundInstructions(p.previous, p.separated, p.base, p.head), '',
     '## Changed files',
     (p.files && p.files.length ? p.files.join('\n') : '(none)'), '',
     '## Callers of changed functions (git grep)',
@@ -501,17 +508,13 @@ function isEnvFile(file) {
   return /(?:^|[\\/])\.env(?:[./\\]|$)/i.test(file);
 }
 
-function computeDiff(dir, baseRef) {
-  let range = baseRef + '...HEAD';
-  let names = git(dir, ['diff', '--name-only', '-z', range, '--']);
-  if (names.status !== 0) {
-    range = baseRef + '..HEAD';
-    names = git(dir, ['diff', '--name-only', '-z', range, '--']);
-  }
+function computeDiff(dir, range, report) {
+  const paths = [range, '--', ':!' + report];
+  const names = git(dir, ['diff', '--name-only', '-z', ...paths]);
   if (names.status !== 0) throw new Error('could not list changes against the base commit');
   const files = names.stdout.split('\0').filter(Boolean);
   if (files.some(isEnvFile)) throw new Error('sensitive file in review diff');
-  const diff = git(dir, ['diff', '--no-ext-diff', '--no-textconv', range, '--']);
+  const diff = git(dir, ['diff', '--no-ext-diff', '--no-textconv', ...paths]);
   if (diff.status !== 0) throw new Error('could not read review diff');
   return { diff: diff.stdout, files };
 }
@@ -814,6 +817,28 @@ async function main(argv) {
   }
 
   const reviewRelPath = reviewFilePath({ pr: flags.pr, branch, base: baseRef });
+  const lock = path.join(gitInfo.gitCommonDir, path.basename(reviewRelPath) + '.lock');
+  if (!tryCreateLock(lock, {}, 0)) {
+    console.error('[review] another review is running for ' + reviewRelPath);
+    return 1;
+  }
+  try {
+    return await reviewHead({ flags, dir, gitInfo, cfg, chain, title, body, baseRef, branch, originalHead, reviewRelPath });
+  } finally {
+    releaseLock(lock);
+  }
+}
+
+async function reviewHead({ flags, dir, gitInfo, cfg, chain, title, body, baseRef, branch, originalHead, reviewRelPath }) {
+  if (gitOut(dir, ['rev-parse', 'HEAD']) !== originalHead) {
+    console.error('[review] HEAD changed before review; sync and retry');
+    return 1;
+  }
+  const history = reviewHistory((args) => gitOut(dir, args), baseRef, originalHead, reviewRelPath, parseReviewFile);
+  if (history.blocks >= BLOCK_LIMIT && !flags.separated) {
+    console.error('[review] ' + SEPARATION_REQUIRED);
+    return 6;
+  }
   const readStatus = () => {
     const status = git(dir, ['status', '--porcelain', '-z', '--untracked-files=all']);
     if (status.status !== 0) throw new Error('could not read worktree status');
@@ -828,12 +853,13 @@ async function main(argv) {
 
   let diffInfo;
   try {
-    diffInfo = computeDiff(dir, baseRef);
+    const range = history.previous ? history.previous.head + '..' + originalHead : baseRef + '...' + originalHead;
+    diffInfo = computeDiff(dir, range, reviewRelPath);
   } catch (e) {
     console.error('[review] ' + e.message);
     return 1;
   }
-  if (!diffInfo.files.length && !diffInfo.diff.trim()) {
+  if (!history.previous && !diffInfo.files.length && !diffInfo.diff.trim()) {
     console.error('[review] empty diff between ' + baseRef + ' and HEAD');
     return 1;
   }
@@ -848,6 +874,9 @@ async function main(argv) {
     pr: flags.pr,
     branch,
     base: baseRef,
+    head: originalHead,
+    previous: history.previous,
+    separated: flags.separated,
     title,
     body,
     files: diffInfo.files,

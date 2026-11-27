@@ -1,13 +1,14 @@
 'use strict';
 // Review by a model that did not write the change. The reviewer may also commit fixes.
-//   node review.cjs --pr <n> [--dir <worktree>] [--engine <name>] [--max-wait <seconds>]
+//   node review.cjs --pr <n> [--dir <worktree>] [--engine <name>] [--max-wait <seconds>] [--separated "<what left the change>"]
 // Writes reviews/REVIEW-PR<n>.md on the PR branch:
 //   line 1  VERDICT: APPROVE | BLOCK
 //   line 2  REVIEWED-HEAD: <sha of the code that was reviewed, after any fixes>
-// Exit: 0 review written, 3 no engine available or no usable verdict, 2 usage error.
+// Exit: 0 review written, 2 usage error, 3 no engine or usable verdict, 6 separation required.
 const fs = require('fs');
 const path = require('path');
 const common = require('./common.cjs');
+const { BLOCK_LIMIT, SEPARATION_REQUIRED, parseSeparation, reviewHistory, roundInstructions } = require('./review-round.cjs');
 const { loadConfig, repoRoot } = require('./config.cjs');
 
 // ---------- pure decisions ----------
@@ -137,6 +138,7 @@ function buildPrompt(p) {
     '',
     '## Title', p.title, '',
     '## Description', p.body || '(empty)', '',
+    ...roundInstructions(p.previous, p.separated, p.base, p.head), '',
     '## Callers of changed functions (git grep)', p.callers || '(none found)', '',
     '## Diff', diff,
   ].join('\n');
@@ -182,32 +184,52 @@ function findCallers(dir, diff) {
 
 function commitLeftovers(dir, ignore) {
   const st = common.git(dir, ['status', '--porcelain', '-z']);
+  if (st.status !== 0) throw new Error('could not read reviewer changes');
   const files = [];
   for (const entry of st.stdout.split('\0').filter(Boolean)) {
     const f = entry.slice(3);
     if (!ignore.some((i) => f === i || f.startsWith(i + '/'))) files.push(f);
   }
   if (!files.length) return false;
-  common.git(dir, ['add', '--'].concat(files));
-  return common.git(dir, ['commit', '-m', 'review: fixes by the reviewer', '--'].concat(files)).status === 0;
+  const add = common.git(dir, ['--literal-pathspecs', 'add', '--'].concat(files));
+  if (add.status !== 0) throw new Error('could not stage reviewer changes');
+  const commit = common.git(dir, ['--literal-pathspecs', 'commit', '-m', 'review: fixes by the reviewer', '--'].concat(files));
+  if (commit.status !== 0) throw new Error('could not commit reviewer changes');
+  return true;
 }
 
 function main(argv) {
   let parsed;
+  let separated;
   try {
-    parsed = common.parseFlags(argv, { pr: 'string', dir: 'string', engine: 'string', 'max-wait': 'string' });
+    parsed = common.parseFlags(argv, { pr: 'string', dir: 'string', engine: 'string', 'max-wait': 'string', separated: 'string' });
+    separated = parseSeparation(parsed.flags.separated);
   } catch (e) {
     console.error(e.message);
     return 2;
   }
   const f = parsed.flags;
   if (!f.pr || !/^\d+$/.test(f.pr)) {
-    console.error('usage: review.cjs --pr <n> [--dir <worktree>] [--engine claude|codex|gemini] [--max-wait <s>]');
+    console.error('usage: review.cjs --pr <n> [--dir <worktree>] [--engine claude|codex|gemini] [--max-wait <s>] [--separated "<what left the change>"]');
     return 2;
   }
   const dir = path.resolve(f.dir || process.cwd());
   let cfg;
   try { cfg = loadConfig(repoRoot(dir)); } catch (e) { console.error(e.message); return 2; }
+  const rel = 'reviews/REVIEW-PR' + f.pr + '.md';
+  const lock = path.join(common.gitOut(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir']), path.basename(rel) + '.lock');
+  if (!common.tryCreateLock(lock, {}, 0)) {
+    console.error('[review] another review is running for ' + rel);
+    return 3;
+  }
+  try {
+    return reviewPr({ f, separated, dir, cfg, rel });
+  } finally {
+    common.releaseLock(lock);
+  }
+}
+
+function reviewPr({ f, separated, dir, cfg, rel }) {
   const rc = cfg.review;
 
   const view = common.gh(['pr', 'view', f.pr, '--repo', cfg.repo, '--json', 'headRefOid,headRefName,title,body']);
@@ -216,8 +238,20 @@ function main(argv) {
   const head = common.gitOut(dir, ['rev-parse', 'HEAD']);
   if (head !== pr.headRefOid) { console.error('local HEAD is not the PR head; push first (local ' + head.slice(0, 8) + ', PR ' + String(pr.headRefOid).slice(0, 8) + ')'); return 2; }
 
-  const diffR = common.git(dir, ['diff', 'origin/' + cfg.baseBranch + '...HEAD']);
-  const prompt = buildPrompt({ number: f.pr, title: pr.title, body: pr.body, diff: diffR.stdout, callers: findCallers(dir, diffR.stdout) });
+  const base = common.gitOut(dir, ['rev-parse', 'origin/' + cfg.baseBranch]);
+  const history = reviewHistory((args) => common.gitOut(dir, args), base, head, rel, parseReviewFile);
+  if (history.blocks >= BLOCK_LIMIT && !separated) {
+    console.error('[review] ' + SEPARATION_REQUIRED);
+    return 6;
+  }
+  const range = history.previous ? history.previous.head + '..' + head : base + '...' + head;
+  const diffR = common.git(dir, ['diff', '--no-ext-diff', '--no-textconv', range, '--', ':!' + rel]);
+  if (diffR.status !== 0) {
+    console.error('[review] could not read review diff');
+    return 2;
+  }
+  const prompt = buildPrompt({ number: f.pr, title: pr.title, body: pr.body, diff: diffR.stdout,
+    callers: findCallers(dir, diffR.stdout), base, head, previous: history.previous, separated });
 
   const order = f.engine ? Object.assign({}, rc, { engines: [f.engine] }) : rc;
   const tried = [];
@@ -259,9 +293,15 @@ function main(argv) {
       continue;
     }
 
-    commitLeftovers(dir, cfg.linkDependencies.concat(['reviews']));
+    const fixStarted = performance.now();
+    let fixCommitMs = 0;
+    try {
+      if (commitLeftovers(dir, cfg.linkDependencies.concat(['reviews']))) fixCommitMs = Math.round(performance.now() - fixStarted);
+    } catch (err) {
+      console.error('[review] ' + err.message);
+      return 3;
+    }
     const reviewedHead = common.gitOut(dir, ['rev-parse', 'HEAD']);
-    const rel = 'reviews/REVIEW-PR' + f.pr + '.md';
     fs.mkdirSync(path.join(dir, 'reviews'), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), formatReviewFile(verdict, reviewedHead, res.stdout));
     common.git(dir, ['add', '--', rel]);
@@ -270,6 +310,7 @@ function main(argv) {
     const push = common.git(dir, ['push', 'origin', 'HEAD:refs/heads/' + pr.headRefName]);
     if (push.status !== 0) { console.error('[review] could not push the review: ' + push.stderr.trim()); return 3; }
     console.error('[review] ' + verdict + ' by ' + pick.engine + ' -> ' + rel);
+    console.log(JSON.stringify({ engine: pick.engine, fixCommitMs }));
     return 0;
   }
 }

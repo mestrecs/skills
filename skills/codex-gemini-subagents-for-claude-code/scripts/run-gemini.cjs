@@ -15,10 +15,7 @@ const WATCHDOG_INTERVAL_MS = 60 * 1000;
 const HARD_LIMIT_MS = 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_S = 1500;
 
-const HELPER_RULES = (dir) =>
-  '\n\nRules: Only write files inside ' + dir + '. Never run git push directly, never use --no-verify, '
-  + 'never merge pull requests manually, never run broad test suites unless explicitly requested, '
-  + 'and never print, log or commit secrets or environment variables.\n';
+const { buildHelperPrompt } = require('./helper-prompt.cjs');
 
 // PURE.
 function parseArgs(argv) {
@@ -134,7 +131,7 @@ function main() {
   const dirPosix = dir.split(path.sep).join('/');
   const tempDirPosix = tempDir.split(path.sep).join('/');
   const reqCopy = path.join(tempDir, 'request.md');
-  const prompt = fs.readFileSync(requestFile, 'utf8') + HELPER_RULES(dirPosix);
+  const prompt = buildHelperPrompt(fs.readFileSync(requestFile, 'utf8'), dirPosix);
   if (cli === 'agy') fs.writeFileSync(reqCopy, prompt, 'utf8');
   const permissionsFile = path.join(tempDir, 'permissions.json');
   if (cli === 'agy') fs.writeFileSync(permissionsFile, JSON.stringify(buildPermissionsObject(dirPosix)), 'utf8');

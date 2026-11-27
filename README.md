@@ -89,9 +89,9 @@ flowchart TD
 
 ### How they fit together
 
-- [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) takes each chat from an isolated worktree through tests, PR, merge gate, deploy, and cleanup.
-- [`codex-gemini-subagents-for-claude-code`](skills/codex-gemini-subagents-for-claude-code/SKILL.md) chooses per chat whether helper tasks run on Codex, Gemini/Antigravity, or Claude.
-- [`cross-model-code-review-codex-gemini-claude`](skills/cross-model-code-review-codex-gemini-claude/SKILL.md) chooses per chat which engine reviews the diff, falling back only at a verified quota limit.
+- [`parallel-worktree-pr-merge-end-to-end`](skills/parallel-worktree-pr-merge-end-to-end/SKILL.md) runs every configured test command, reports all failures together, and records stage timings. After two BLOCKs it requires the blocking work to be separated before another review.
+- [`codex-gemini-subagents-for-claude-code`](skills/codex-gemini-subagents-for-claude-code/SKILL.md) routes helpers per chat, ends coding requests with a five-case failure checklist, and keeps temporary files outside the worktree.
+- [`cross-model-code-review-codex-gemini-claude`](skills/cross-model-code-review-codex-gemini-claude/SKILL.md) checks all five failure cases in the first pass. Follow-ups reconcile prior findings, focus on the fix diff, and record unproven new out-of-diff findings as `P2-NEW`. A third review after two BLOCKs needs a verified separation.
 - [`claude-code-subagent-model-routing`](skills/claude-code-subagent-model-routing/SKILL.md) picks the Claude model and effort whenever a subagent runs on Claude.
 
 ## Install
@@ -213,6 +213,10 @@ The rules and the reason behind each one are in [`method.md`](skills/parallel-wo
 **Can a chat still start Claude when the guard is on?** Only with a recent ceiling proof (`CLAUDE-ONLY: ceiling`) or a configured Claude-only connector (`CLAUDE-ONLY: tool <name>` — a connector that exists only in Claude Code on this machine, found by setup, such as `my-db` or `browser`; default `[]`), and both are logged to the audit file. A hook cannot stop indirect launches such as a program that runs Claude inside it — see [`guard-hook.md`](skills/codex-gemini-subagents-for-claude-code/references/guard-hook.md).
 
 **Do I need all four skills?** No. Each skill works alone; install only what you want with `--skill <name>`.
+
+## Roadmap
+
+- Optional session report with elapsed time by stage, review rounds, and test results for one chat.
 
 ## Contributing
 

@@ -1,6 +1,8 @@
 {
   "skill": "codex-gemini-subagents-for-claude-code",
   "should_trigger": [
+    { "prompt": "Send this code change to a Gemini helper and add the five failure cases at the end of its request so it reports how each was checked.", "reason": "Exercises the mandatory coding checklist in the helper prompt." },
+    { "prompt": "Run a Codex helper in its own worktree, but keep its prompt, response, logs, and scratch files somewhere outside it.", "reason": "Exercises the worktree boundary for temporary helper files." },
     { "prompt": "Use codex helpers for this chat so my subagents do not burn my Claude quota.", "reason": "Asks to switch helper subagent routing for the current chat to Codex." },
     { "prompt": "Use gemini helpers in this Claude Code session and block accidental Claude subagents with a hook.", "reason": "Requests per-chat Gemini helper routing and the PreToolUse guard hook." },
     { "prompt": "Configure Codex CLI and Antigravity CLI as subagent helpers with automatic fallback to Claude only when quota ceilings are hit.", "reason": "Describes the core quota-ceiling fallback and helper runner setup." },

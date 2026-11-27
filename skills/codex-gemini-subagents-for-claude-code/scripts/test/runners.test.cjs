@@ -121,7 +121,10 @@ if (mode === 'sleep') {
     JSON.stringify({ windowPct: 95, weekPct: 20, at: Date.now() }));
   setTimeout(() => {}, 30000);
 } else {
-  if (!prompt.includes('never print, log or commit secrets')) process.exit(9);
+  if (!prompt.includes('never print, log or commit secrets')
+    || !prompt.includes('Keep temporary files outside the worktree')
+    || !prompt.includes('Before returning code changes')
+    || !prompt.trimEnd().endsWith('Report all failures together.')) process.exit(9);
   if (out) fs.writeFileSync(out, 'Done: ' + a.join(' '));
   process.exit(0);
 }
@@ -214,6 +217,10 @@ console.log(JSON.stringify({ response: JSON.stringify({ hasSandbox, request }) }
     const meta1 = JSON.parse(fs.readFileSync(ans, 'utf8'));
     assert.strictEqual(meta1.hasSandbox, true);
     assert.match(meta1.request, /Check module b.js/);
+    assert.match(meta1.request, /Keep temporary files outside the worktree/);
+    assert.match(meta1.request, /Follow this checklist when the task writes or changes code/);
+    assert.match(meta1.request, /Duplicate effects[\s\S]+Interruption[\s\S]+Concurrency[\s\S]+Tenant and group isolation[\s\S]+Optional behavior/);
+    assert.match(meta1.request.trimEnd(), /Report all failures together\.$/);
 
     // 2. Delivery mode omits --sandbox
     const delivRun = cp.spawnSync(process.execPath, [GEMINI_SCRIPT, work, req, ans, '--deliver'], { env: env(), encoding: 'utf8' });

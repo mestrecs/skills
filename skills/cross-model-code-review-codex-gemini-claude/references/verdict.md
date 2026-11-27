@@ -24,7 +24,13 @@ REVIEWED-HEAD: 0123456789abcdef0123456789abcdef01234567
 
 - Line 1: `VERDICT: APPROVE` or `VERDICT: BLOCK`. If the reviewer outputs multiple `VERDICT:` lines and any of them is `BLOCK`, `BLOCK` wins.
 - Line 2: `REVIEWED-HEAD: <sha>` — the commit SHA **after** any fixes committed by the reviewer during the review.
-- Followed by findings (severity `P1`/`P2`/`P3`, `file:line`, reason), fixes applied, and what could not be proved (such as checks blocked by sandbox restrictions).
+- Followed by findings with stable IDs (such as `F1`), severity (`P0` through `P3`), `file:line`, and evidence. Include checks, fixes applied, and what could not be proved.
+
+## Findings across rounds
+
+- **First round.** Check each new or changed path for duplicate effects, interruption before and after writes or sends, concurrent execution, cross-tenant or cross-group access, and optional or scheduled behavior behind a flag that defaults to off. List every finding in the same report.
+- **Later rounds.** Keep the original IDs. Carry forward each finding with `RESOLVED`, `PARTIAL`, or `OPEN` and evidence. Use the diff from the prior `REVIEWED-HEAD` to the current head. Fix regressions and new P0/P1 defects introduced by the diff can block. A newly discovered issue outside the diff needs P0/P1 severity and a reproducing test or concrete steps with observed results to block. Record the other newly discovered issues outside the diff as `P2-NEW`.
+- **Two BLOCKs.** The runner counts distinct blocked heads in the committed history of this report path. Overwriting a report preserves the earlier round in Git. Rewording a report for the same head does not add a block. To run another review, separate the blocking behavior into another PR or put it behind a flag that defaults to off. Pass `--separated "<what left the change>"` so the reviewer can verify the change in the diff. Uncommitted reports, including `--no-commit` output, do not count.
 
 ## One-head validity rule
 

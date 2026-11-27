@@ -13,6 +13,7 @@ Review a pull request (`--pr <n>`) or a local branch diff (`--base <ref>`) with 
 - **Strict ordered fallback:** moves to the next engine **only** when the current one is missing, logged out, or proven at its quota ceiling — **never** because it is slow.
 - **Concurrency cap:** limits concurrent reviews per engine (default `3`) via machine-wide slot locks so a shared account is not drained.
 - **Compatible verdict format:** writes `reviews/REVIEW-PR<n>.md` with `VERDICT: APPROVE|BLOCK` on line 1 and `REVIEWED-HEAD: <sha>` on line 2, matching `parallel-worktree-pr-merge-end-to-end`.
+- **Review rounds:** the first pass checks all five failure cases and reports every finding. Follow-ups use the diff from the last reviewed head. Two BLOCKs require a separation before another review.
 
 ## When to use
 
@@ -57,12 +58,22 @@ node scripts/review.cjs --base origin/main --dir ../my-app-wt/feat --chat <sessi
 
 # Force a single engine (skips fallback chain)
 node scripts/review.cjs --pr 42 --dir ../my-app-wt/feat --engine gemini
+
+# Continue after separating the blocking part
+node scripts/review.cjs --pr 42 --dir ../my-app-wt/feat --separated "Moved the scheduled job to its own PR"
 ```
 
 Exit codes:
 - `0`: Verdict file written (and fixes/verdict committed unless `--no-commit`). Read line 1 (`VERDICT: APPROVE` or `VERDICT: BLOCK`).
 - `3`: No engine available — every engine in the chain is missing, logged out, or proven at its quota ceiling.
+- `6`: Two distinct reviewed heads received BLOCK. Separate the blocking part into another PR or behind a flag that defaults to off, then pass `--separated "<what left the change>"`.
 - `1`: Error — invalid arguments, git/`gh` failure, timeout, engine error unrelated to quota/auth, secret detected in diff, or malformed verdict.
+
+## Review rounds
+
+1. **First review.** Check for duplicate effects, interruption before and after saves or sends, concurrent runs, tenant isolation, and optional or scheduled behavior that should default to off. List all findings with IDs, severity and evidence.
+2. **Follow-ups.** Mark each prior finding `RESOLVED`, `PARTIAL`, or `OPEN` with evidence. Review the diff from the last reviewed head. A fix regression or new P0/P1 in the diff can block. A new issue outside that diff can block only if it is a P0/P1 reproduced with a test or concrete steps and observed results. Record other new issues outside the diff as `P2-NEW`, which cannot block on its own.
+3. **After two BLOCKs.** The runner checks committed reports before calling an engine. Use `--separated` to describe the separation, which the reviewer verifies in the new diff. Keep the reports in branch history.
 
 ## Fallback and Claude reviewer rules
 

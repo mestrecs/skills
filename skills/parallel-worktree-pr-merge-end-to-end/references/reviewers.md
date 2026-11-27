@@ -8,6 +8,9 @@ A reviewer reads a PR that someone else wrote, hunts for defects, may commit fix
 - Output: `reviews/REVIEW-PR<n>.md` on the PR branch. Line 1 `VERDICT: APPROVE` or `VERDICT: BLOCK`. Line 2 `REVIEWED-HEAD: <sha>`. Then findings, each with file and line, and what was fixed.
 - Input: PR body, diff, and the callers of changed functions. Tell it to read the code, not trust the description.
 - A verdict is valid for one head. Any later push needs a new one.
+- In the first round, check for duplicate effects, interrupted writes or sends, concurrent runs, cross-tenant data access, and optional or scheduled features that should default to off. Report all findings with stable IDs, severity and evidence.
+- In follow-ups, reconcile every prior finding as `RESOLVED`, `PARTIAL`, or `OPEN` and review the diff from the last reviewed head. New issues outside that diff need reproduced P0/P1 evidence to block. Mark the others `P2-NEW`.
+- After two distinct BLOCK verdicts, remove the blocking part into another PR or isolate it behind a flag that defaults to off. Pass `--separated "<what left the change>"` to delivery or review, and verify the separation in the follow-up diff.
 - Put the secrets rule in every prompt: never print or write a key, token or password; never dump environment variables.
 - Engine order is `review.engines`. When one is missing, logged out or at quota, take the next. When none is available, `review.cjs` exits 3.
 

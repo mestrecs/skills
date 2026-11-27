@@ -15,10 +15,7 @@ const { readQuotaFile, checkQuota, markCeiling, looksLikeQuotaError } = require(
 const WATCHDOG_INTERVAL_MS = 60 * 1000;
 const HARD_LIMIT_MS = 60 * 60 * 1000;
 
-const HELPER_RULES = (dir) =>
-  '\n\nRules: Only write files inside ' + dir + '. Never run git push directly, never use --no-verify, '
-  + 'never merge pull requests manually, never run broad test suites unless explicitly requested, '
-  + 'and never print, log or commit secrets or environment variables.\n';
+const { buildHelperPrompt } = require('./helper-prompt.cjs');
 
 // PURE.
 function parseArgs(argv) {
@@ -116,7 +113,7 @@ function main() {
     process.exitCode = 3;    return;
   }
 
-  const prompt = fs.readFileSync(requestFile, 'utf8') + HELPER_RULES(dir);
+  const prompt = buildHelperPrompt(fs.readFileSync(requestFile, 'utf8'), dir);
   const gitInfo = detectGitCommonDir(dir);
   const model = parsed.model || (cfg.codex && cfg.codex.model) || '<latest>';
   const effort = parsed.effort || (cfg.codex && cfg.codex.effort) || 'medium';

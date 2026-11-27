@@ -44,6 +44,60 @@ test('parseArgs validates flags and rejects missing target or bad values', () =>
   assert.throws(() => r.parseArgs(['--base', 'main', '--cli', 'other']), /--cli/);
   assert.throws(() => r.parseArgs(['--base', 'main', '--max-wait', '-1']), /--max-wait/);
   assert.throws(() => r.parseArgs(['--base', 'main', '--unknown']), /unknown argument/);
+  assert.throws(() => r.parseArgs(['--pr', '42', '--separated', '  ']), /--separated requires/);
+  assert.throws(() => r.parseArgs(['--pr', '42', '--separated', '--no-commit']), /--separated requires/);
+  assert.equal(r.parseArgs(['--pr', '42', '--separated', ' removed\n  scheduler ']).separated, 'removed scheduler');
+});
+
+test('review covers all failure cases, then uses the fix diff and counts distinct BLOCKs in history', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'es-review-rounds-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const { repo, head } = makeTempRepoWithBranch(tmp);
+  const home = path.join(tmp, 'home');
+  const capture = path.join(tmp, 'prompt.txt');
+  const engine = path.join(tmp, 'reviewer.cjs');
+  fs.writeFileSync(engine, `
+const fs = require('fs');
+if (process.argv.includes('--version')) process.exit(0);
+fs.writeFileSync(process.env.FAKE_PROMPT, fs.readFileSync(0));
+console.log(JSON.stringify({result: 'F1 P1 billing.js:1 duplicate charge on retry\\nVERDICT: ' + process.env.FAKE_VERDICT}));
+`);
+  const run = (verdict, extra = []) => cp.spawnSync(process.execPath,
+    [REVIEW_SCRIPT, '--base', 'main', '--dir', repo, '--engine', 'claude', ...extra], {
+      encoding: 'utf8', env: { ...process.env, ENGINE_SWITCH_HOME: home, ENGINE_SWITCH_BIN_CLAUDE: engine,
+        FAKE_PROMPT: capture, FAKE_VERDICT: verdict },
+    });
+  const first = run('BLOCK');
+  assert.equal(first.status, 0, first.stderr);
+  const firstPrompt = fs.readFileSync(capture, 'utf8');
+  assert.match(firstPrompt, /Duplicate effects[\s\S]+Interruption[\s\S]+concurrently[\s\S]+another tenant[\s\S]+Optional or scheduled/);
+  assert.match(firstPrompt, /all findings together with stable IDs/);
+
+  const report = path.join(repo, r.reviewFilePath({ branch: 'feat/billing' }));
+  fs.appendFileSync(report, '\nClarification for the same reviewed head.\n');
+  git(repo, ['commit', '-am', 'clarify first report']);
+  fs.writeFileSync(path.join(repo, 'app.js'), 'const fixed = true;\n');
+  git(repo, ['commit', '-am', 'repair']);
+  const second = run('BLOCK');
+  assert.equal(second.status, 0, second.stderr);
+  const secondPrompt = fs.readFileSync(capture, 'utf8');
+  assert.match(secondPrompt, new RegExp(head + '\\.\\.[0-9a-f]+'));
+  assert.match(secondPrompt, /RESOLVED, PARTIAL, or OPEN/);
+  assert.match(secondPrompt, /P0\/P1 and reproduced/);
+  assert.match(secondPrompt, /P2-NEW/);
+  assert.match(secondPrompt, /F1 P1 billing.js:1 duplicate charge on retry/);
+  assert.match(secondPrompt, /\+const fixed = true/);
+  assert.doesNotMatch(secondPrompt, /diff --git a\/(?:billing.js|reviews\/)/);
+
+  fs.writeFileSync(path.join(repo, 'app.js'), 'const optional = false;\n');
+  git(repo, ['commit', '-am', 'disable optional path']);
+  const third = run('APPROVE');
+  assert.equal(third.status, 6, third.stderr);
+  assert.match(third.stderr, /--separated/);
+  assert.equal(fs.readFileSync(capture, 'utf8'), secondPrompt);
+  const separated = run('APPROVE', ['--separated', 'disabled optional path']);
+  assert.equal(separated.status, 0, separated.stderr);
+  assert.match(fs.readFileSync(capture, 'utf8'), /Verify in the diff[\s\S]+disabled optional path/);
 });
 
 test('buildEngineChain orders preferred first, claude goes straight to claude, respects override', () => {

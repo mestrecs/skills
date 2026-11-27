@@ -2,8 +2,10 @@
 // Machine-wide queue for test suites: only N suites run at once on this computer, and only
 // when there is free memory. Usage:
 //   node test-queue.cjs [--timeout <seconds>] -- <command> [args...]
+//   node test-queue.cjs [--timeout <seconds>] --batch -- "command one" "command two"
 // Exit code = the command's exit code (2 usage, 124 gave up waiting).
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const common = require('./common.cjs');
@@ -48,6 +50,39 @@ function freeBytes() {
   return os.freemem();
 }
 
+function runBatch(commands, logsDir) {
+  const failures = [];
+  const output = [];
+  const secrets = Object.entries(process.env)
+    .filter(([key, value]) => /TOKEN|SECRET|PASSW|CREDENTIAL|(?:API|PRIVATE|ACCESS)_?KEY/i.test(key) && value.length >= 8)
+    .map(([, value]) => value).sort((a, b) => b.length - a.length);
+  const redact = (text) => secrets.reduce((safe, value) => safe.split(value).join('[redacted]'), text)
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted]')
+    .replace(/\b(?:sk-[\w-]{20,}|gh[pousr]_[\w]{20,}|github_pat_[\w]{20,}|xox[abp]-[\w-]{8,}|AKIA[A-Z0-9]{16}|eyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}|Bearer[ \t]+[\w./+=-]+)/gi, '[redacted]');
+  for (const [index, command] of commands.entries()) {
+    const result = common.run(command, [], { shell: true });
+    const text = redact(result.stdout + '\n' + result.stderr);
+    const label = 'Test command ' + (index + 1) + ' (exit ' + result.status + ')';
+    output.push('=== ' + label + ' ===\n' + text);
+    if (result.status !== 0) {
+      failures.push(label);
+      const names = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(?:not ok\b|FAIL(?:ED)?\s|✖\s)/.test(line));
+      failures.push(...new Set(names));
+    }
+  }
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+    const log = path.join(logsDir, Date.now() + '-' + process.pid + '.log');
+    fs.writeFileSync(log, output.join('\n'), { mode: 0o600, flag: 'wx' });
+    console.error('[test-queue] full suite log: ' + log);
+  } catch (err) {
+    console.error('[test-queue] could not save suite log (' + err.code + ')');
+  }
+  if (failures.length) console.error('[test-queue] suite failures:\n' + failures.join('\n'));
+  return failures.length ? 1 : 0;
+}
+
 function main(argv) {
   const sep = argv.indexOf('--');
   if (sep < 0 || sep === argv.length - 1) {
@@ -56,7 +91,7 @@ function main(argv) {
   }
   let flags;
   try {
-    flags = common.parseFlags(argv.slice(0, sep), { timeout: 'string' }).flags;
+    flags = common.parseFlags(argv.slice(0, sep), { timeout: 'string', batch: 'bool' }).flags;
   } catch (e) {
     console.error(e.message);
     return 2;
@@ -95,9 +130,14 @@ function main(argv) {
   process.on('SIGTERM', () => process.exit(143));
 
   const waitedMs = Date.now() - started;
-  const sp = buildSpawn(cmdArgs, process.platform);
-  const child = cp.spawnSync(sp.cmd, sp.args, { stdio: 'inherit', shell: sp.shell, env: common.cleanEnv(), windowsHide: true });
-  const code = child.status === null ? 1 : child.status;
+  let code;
+  if (flags.batch) {
+    code = runBatch(cmdArgs, path.join(common.parallelHome(), 'suite-logs'));
+  } else {
+    const sp = buildSpawn(cmdArgs, process.platform);
+    const child = cp.spawnSync(sp.cmd, sp.args, { stdio: 'inherit', shell: sp.shell, env: common.cleanEnv(), windowsHide: true });
+    code = child.status === null ? 1 : child.status;
+  }
   common.appendLog(logFile, { event: 'ran', waitedMs, runMs: Date.now() - started - waitedMs, exit: code, dir: path.basename(process.cwd()) });
   return code;
 }

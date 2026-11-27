@@ -57,7 +57,8 @@ Finish by writing the file, showing a one-screen summary (engines, review rule, 
 | `docsDirectToBase` | Docs and notes skip the PR and review (pushed straight to the base). |
 | `worktreeDir` | Where worktrees live; `<repo>` expands to the repo name. |
 | `linkDependencies` | Folders linked into each worktree (junction or symlink). List them in `.gitignore` without a trailing slash (`node_modules`, not `node_modules/`). |
-| `testCommand` | The full suite. `quickCheckCommand`: a fast check before push, or null. |
+| `testCommand` | The full suite as one command string, a list of command strings, or null. Delivery runs every listed command within one queue slot and prints all command failures together with the full log path under `~/.parallel-pr/suite-logs/`. |
+| `quickCheckCommand` | A fast check before the suite and push, or null. |
 | `parallel.suiteSlots` | Suites at once on this machine. `stuckSuiteMinutes`: a slot older than this is stale. `minFreeMemoryGB`: do not start below this. |
 | `review.requiredFor` | `always`, `critical` or `never`. |
 | `review.criticalPaths` | Globs that trigger review. |

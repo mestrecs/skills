@@ -51,12 +51,13 @@ How to find `<session-id>`: check the `session_id` passed to hooks, the current 
    ```bash
    git worktree add -b helper/<slug> ../<repo>-wt/<slug> origin/main
    ```
-2. **Write a complete request file** (e.g., `request.md` in a temp or scratch path). The helper cannot see your chat history, so include:
+2. **Write a complete request file** and keep it, the answer, logs, and other temporary files outside the worktree. The helper cannot see your chat history, so include:
    - Goal and exact scope
    - Files allowed to read/modify, and what **not** to touch
    - How to prove the change (exact test file or check command)
    - Answer format: at most 10 lines
    - Hard rules: only edit inside the assigned directory, never push directly, never `--no-verify`, never run broad test suites, never print or commit secrets or environment variables (the runners also append these rules automatically)
+   - For a coding task, finish the request with [the failure cases checklist](references/failure-cases.md), including for direct or fallback Claude helpers. The Codex, Gemini and Antigravity runners append it themselves, so give those runners the request body without a second copy.
 3. **Run the helper in the background** and wait for completion:
    ```bash
    # Codex (write mode: sandboxed, no network)
